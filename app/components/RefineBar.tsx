@@ -6,18 +6,29 @@ import { REFINEMENTS, type RefineKey } from "@/lib/refine";
  * The reason the preview isn't the end of the journey. Clients can't say what's
  * wrong with a design, but they can react to one — and each reaction is a
  * re-generation, not a trip back to the form.
+ *
+ * "Start over" is deliberately separated from the tweaks: wanting a different
+ * design entirely is a different intent from wanting warmer copy, and it was
+ * getting lost in a row of pills.
  */
+
+const TWEAKS = REFINEMENTS.filter((r) => r.id !== "regenerate");
+
 export default function RefineBar({
   loading,
   pending,
+  versionCount,
   onRefine,
   bookingUrl,
 }: {
   loading: boolean;
   pending: RefineKey | null;
+  versionCount: number;
   onRefine: (key: RefineKey) => void;
   bookingUrl: string;
 }) {
+  const regenerating = pending === "regenerate";
+
   return (
     <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 sm:p-8">
       <h2 className="font-heading text-h3-m font-bold text-ink">
@@ -29,26 +40,63 @@ export default function RefineBar({
       </p>
 
       <div className="flex flex-wrap gap-2">
-        {REFINEMENTS.map((option) => {
-          const isPending = pending === option.id;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              disabled={loading}
-              onClick={() => onRefine(option.id)}
-              className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-ink transition hover:border-brand hover:bg-brand/5 hover:text-brand disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isPending && (
-                <span
-                  aria-hidden="true"
-                  className="df-spin size-3.5 rounded-full border-2 border-brand/25 border-t-brand"
-                />
-              )}
-              {option.label}
-            </button>
-          );
-        })}
+        {TWEAKS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            disabled={loading}
+            onClick={() => onRefine(option.id)}
+            className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-ink transition hover:border-brand hover:bg-brand/5 hover:text-brand disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {pending === option.id && (
+              <span
+                aria-hidden="true"
+                className="df-spin size-3.5 rounded-full border-2 border-brand/25 border-t-brand"
+              />
+            )}
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      {/* A different design entirely — its own decision, not a tweak. */}
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-gray-200 bg-cream px-5 py-4">
+        <div className="min-w-0">
+          <p className="font-heading text-sm font-bold text-ink">
+            Don&apos;t like this design at all?
+          </p>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            Start again from scratch — a different layout, structure and look.
+            {versionCount > 1
+              ? " Your earlier designs stay saved above."
+              : " We'll keep this one so you can compare."}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => onRefine("regenerate")}
+          className="inline-flex shrink-0 items-center gap-2 rounded-xl border-2 border-brand bg-white px-5 py-2.5 font-heading text-sm font-bold text-brand transition hover:bg-brand hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {regenerating ? (
+            <span
+              aria-hidden="true"
+              className="df-spin size-4 rounded-full border-2 border-brand/25 border-t-brand"
+            />
+          ) : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M20 11A8 8 0 1 0 18.6 15M20 5v6h-6"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
+          {regenerating ? "Designing…" : "Generate a new design"}
+        </button>
       </div>
 
       {/* The sneak peek converts here, not on the preview itself. */}

@@ -33,9 +33,26 @@ Designed so nothing asks the client to describe their own brand:
 
 Clients can't say what's wrong with a design, but they can react to one. Under
 the preview: *Friendlier · More formal · Different colours · Shorter text · Add
-prices · Try again*. Each re-runs generation with a fixed instruction; the keys
-are a closed set in [lib/refine.ts](lib/refine.ts), so nothing from the browser
-reaches the prompt as free text.
+prices*. Each re-runs generation with a fixed instruction; the keys are a closed
+set in [lib/refine.ts](lib/refine.ts), so nothing from the browser reaches the
+prompt as free text.
+
+**Generate a new design** is separated from those tweaks — wanting a different
+design entirely is a different intent from wanting warmer copy, and it was
+getting lost in a row of pills. It produces a fresh layout, structure and
+section list rather than editing the current one.
+
+### Versions
+
+Every generation is kept and shown as a switcher above the preview, because
+free-form output varies run to run and a client who asks to see another design
+often prefers the first. Without this, regenerating destroyed the version they
+were about to pick. Refining branches from whichever version is on screen, and
+the set is capped at 10 since each carries a full HTML document.
+
+Measured over four runs of the same brief: 6, 7, 8 and 7 sections, all four
+section lists distinct. The palette holds steady when the client asked for a
+specific colour — changing it is what *Different colours* is for.
 
 **Different colours** is enforced, not requested. Models tend to nudge the shade
 (`#ea580c` → `#d35400`) which reads as a broken button, so the returned primary

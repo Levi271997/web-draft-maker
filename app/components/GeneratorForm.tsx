@@ -3,12 +3,22 @@
 import { useRef, useState } from "react";
 import type { GenerateMode, GenerateResponse } from "@/lib/types";
 import type { Brief } from "@/lib/brief";
-import type { RefineKey } from "@/lib/refine";
+import { REFINEMENTS, type RefineKey } from "@/lib/refine";
 import BriefWizard from "./BriefWizard";
 import BrandReadout from "./BrandReadout";
 import HomepagePreview from "./HomepagePreview";
 import SectionPlan from "./SectionPlan";
 import RefineBar from "./RefineBar";
+import VersionBar, { type Version } from "./VersionBar";
+
+/** Keeps memory bounded — each version carries a full HTML document. */
+const MAX_VERSIONS = 10;
+
+function versionLabel(refine: RefineKey | undefined, index: number): string {
+  if (!refine) return "Original";
+  if (refine === "regenerate") return `Fresh take ${index}`;
+  return REFINEMENTS.find((r) => r.id === refine)?.label ?? `Version ${index}`;
+}
 
 const EXAMPLES = ["stripe.com", "linear.app", "digitalfeet.com"];
 
@@ -37,10 +47,13 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
   const [loading, setLoading] = useState(false);
   const [refining, setRefining] = useState<RefineKey | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<GenerateResponse | null>(null);
+  const [versions, setVersions] = useState<Version[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
 
   const lastRequest = useRef<LastRequest | null>(null);
   const resultsRef = useRef<HTMLDivElement | null>(null);
+
+  const result: GenerateResponse | null = versions[activeIndex]?.result ?? null;
 
   async function run(
     request: LastRequest,
@@ -53,9 +66,12 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
     setLoading(true);
     setRefining(refine ?? null);
     setError(null);
-    // Keep the old result on screen while refining, so the page doesn't
-    // collapse under the user mid-scroll.
-    if (!refine) setResult(null);
+    // A fresh submit starts a new set; a refine keeps the old design on screen
+    // so the page doesn't collapse under the user mid-scroll.
+    if (!refine) {
+      setVersions([]);
+      setActiveIndex(0);
+    }
 
     try {
       const body =
@@ -76,7 +92,16 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
         return;
       }
 
-      setResult(data as GenerateResponse);
+      // A refine appends to the set; a fresh submit starts a new one.
+      const base = refine ? versions : [];
+      const next: Version = {
+        result: data as GenerateResponse,
+        label: versionLabel(refine, base.length + 1),
+      };
+
+      const combined = [...base, next].slice(-MAX_VERSIONS);
+      setVersions(combined);
+      setActiveIndex(combined.length - 1);
 
       if (refine) {
         resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -223,6 +248,12 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
             loading ? "opacity-50" : ""
           }`}
         >
+          <VersionBar
+            versions={versions}
+            activeIndex={activeIndex}
+            disabled={loading}
+            onSelect={setActiveIndex}
+          />
           <BrandReadout
             mode={result.mode}
             brand={result.brand}
@@ -232,6 +263,7 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
           <RefineBar
             loading={loading}
             pending={refining}
+            versionCount={versions.length}
             onRefine={handleRefine}
             bookingUrl={bookingUrl}
           />
