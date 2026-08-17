@@ -109,8 +109,8 @@ export default function HomepagePreview({
       </div>
 
       <p className="mt-3 text-xs text-ink-soft">
-        Scroll inside the frame to see the whole page. Imagery is drawn with CSS
-        and SVG, so a real build would swap in your own photography.
+        Scroll inside the frame to see the whole page. Photographs are
+        placeholders from picsum.photos — a real build would use your own.
       </p>
     </section>
   );

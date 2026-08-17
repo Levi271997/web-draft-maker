@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { ScrapedBrand } from "./scrape";
 import { briefToPrompt, type Brief } from "./brief";
-import type { Identity, Palette, Recommendation } from "./types";
+import type { Identity, OutlineEntry, Palette, Recommendation } from "./types";
 
 /**
  * Two passes.
@@ -14,6 +14,37 @@ import type { Identity, Palette, Recommendation } from "./types";
  * Splitting them keeps the metadata reliably parseable while letting the page
  * pass spend its whole budget on markup instead of JSON escaping.
  */
+
+/**
+ * Layout treatments the page pass must implement literally. Asking a model to
+ * "vary the rhythm" produced six stacked centred sections; naming the treatment
+ * per section up front is what actually makes the page look designed.
+ */
+const TREATMENTS = [
+  "full-bleed-image",
+  "dark-band",
+  "split-image-left",
+  "split-image-right",
+  "card-grid",
+  "centered-statement",
+  "overlap-feature",
+  "gallery-mosaic",
+  "stat-strip",
+  "quote-feature",
+] as const;
+
+const TREATMENT_NOTES: Record<string, string> = {
+  "full-bleed-image": "edge-to-edge photograph with a brand-gradient overlay and text sitting on top",
+  "dark-band": "full-width band in --primary-dark or --primary, light text, breaking the page rhythm",
+  "split-image-left": "asymmetric two-column, photo on the left at roughly 7/5 — not a plain 50/50",
+  "split-image-right": "asymmetric two-column, photo on the right at roughly 5/7",
+  "card-grid": "3-column card grid (2 on tablet, 1 on mobile) with lift-on-hover",
+  "centered-statement": "narrow centred column, large display type, plenty of air",
+  "overlap-feature": "a panel or image pulled up over the previous section with negative margin",
+  "gallery-mosaic": "an uneven photo grid where one tile spans two columns or rows",
+  "stat-strip": "a row of oversized figures with small labels beneath",
+  "quote-feature": "one large pull-quote at display size, attributed, with generous padding",
+};
 
 const IDENTITY_SCHEMA = {
   type: "object",
@@ -75,10 +106,16 @@ const IDENTITY_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["title", "intent"],
+        required: ["title", "intent", "treatment"],
         properties: {
           title: { type: "string", description: "Short name for the section." },
-          intent: { type: "string", description: "One sentence: the job it does and roughly how it should look." },
+          intent: { type: "string", description: "One sentence: the job it does." },
+          treatment: {
+            type: "string",
+            enum: [...TREATMENTS],
+            description:
+              "How this section is laid out. Vary these across the page — never the same treatment twice in a row, and no treatment more than twice overall.",
+          },
         },
       },
     },
@@ -119,7 +156,9 @@ Rules:
 function pageSystemPrompt(id: Identity): string {
   const { palette, typography, brand, nav } = id;
 
-  return `You are a senior web designer and front-end developer. Write the complete homepage for "${brand.name}" as a single self-contained HTML document.
+  return `You are an award-winning web designer. Write the complete homepage for "${brand.name}" as a single self-contained HTML document.
+
+Aim for work that would be featured on Awwwards — confident, art-directed, memorable. A competent but generic corporate template is a failure.
 
 BRAND
 - Name: ${brand.name}
@@ -127,7 +166,7 @@ BRAND
 - Voice: ${brand.voice}
 - About: ${brand.summary}
 
-PALETTE (use exactly these, as CSS custom properties)
+PALETTE (define as CSS custom properties on :root and use throughout)
 --primary: ${palette.primary}
 --primary-dark: ${palette.primaryDark}
 --accent: ${palette.accent}
@@ -137,29 +176,71 @@ PALETTE (use exactly these, as CSS custom properties)
 --text-muted: ${palette.textMuted}
 
 TYPE
-- Headings: "${typography.headingFont}"
-- Body: "${typography.bodyFont}"
-- Load both from Google Fonts with a <link> in the head.
+- Headings: "${typography.headingFont}"  |  Body: "${typography.bodyFont}"
+- Load both from Google Fonts with a <link> in the head, with weights 400;500;600;700;800.
 
 NAVIGATION: ${nav.items.join(", ")} — with a "${nav.ctaLabel}" button.
 
-TECHNICAL REQUIREMENTS
-- Output ONE complete document: <!doctype html> through </html>. Nothing before or after it.
-- All CSS inside a single <style> block in the head. No external stylesheets except the Google Fonts link.
-- ZERO JavaScript. No <script> tags. The page renders in a sandbox where scripts never run, so anything requiring JS will simply appear broken.
-- No external images — every remote URL will fail. Create all imagery with CSS gradients, geometric shapes, or inline SVG you write yourself.
-- Fully responsive. Use CSS grid and flexbox, clamp() for type, and at least one media query for narrow screens.
-- Semantic HTML: header, nav, main, section, footer, real heading hierarchy.
-- Accessible: sufficient contrast, alt text or aria-hidden on decorative SVG, visible focus styles.
+=== PHOTOGRAPHY (important — the page must not be image-free) ===
+Use real photographs from picsum.photos. The exact format:
+  https://picsum.photos/seed/WORD/WIDTH/HEIGHT
+Rules:
+- Use a DIFFERENT seed word per image (e.g. /seed/harbour/, /seed/atelier/) so no two repeat.
+- Sizes: hero/full-bleed 1600/900, cards 800/600, tall portraits 600/800, avatars 200/200.
+- Always set width/height attributes and style with object-fit: cover, plus a border-radius that matches the page.
+- Art-direct them so they don't read as stock: overlay a brand-colour gradient
+  (e.g. linear-gradient(180deg, transparent, var(--primary-dark)) at 50-80% opacity),
+  or apply filter: saturate(0.8) contrast(1.05), or a duotone-ish blend mode.
+- Use 4-8 photographs across the page: a hero image, a gallery or case-study grid, portraits for any people, and at least one full-bleed band.
+- Every <img> needs meaningful alt text.
+Inline SVG (that you write) is still the right choice for icons, logos and decorative shapes.
 
-DESIGN DIRECTION
-- Design this page for THIS brand. Do not reach for a default SaaS layout unless the business is a SaaS product.
-- Vary section rhythm: alternate full-bleed colour bands, contained sections, split layouts and grids. Avoid six identical centred sections stacked in a row.
-- Real, specific copy throughout — names, numbers, plausible detail. Never "Lorem ipsum", never "Feature One".
-- Consider using inline SVG for icons and illustrative shapes; it is the only way to get real imagery here.
+=== MOTION (CSS only — JavaScript never runs here) ===
+- Transitions on every interactive element: 200-300ms, cubic-bezier(.2,.7,.3,1).
+- Cards and buttons lift on hover: translateY(-4px) plus a deepened shadow.
+- Images scale gently inside a fixed overflow:hidden frame on hover (transform: scale(1.04)).
+- A staggered entrance on hero elements using @keyframes with animation-delay (0.05s increments) — animate opacity and translateY only.
+- Wrap all of it in @media (prefers-reduced-motion: reduce) { animation: none; transition: none; }
 
-SECTIONS TO BUILD (in order)
-${id.outline.map((s, i) => `${i + 1}. ${s.title} — ${s.intent}`).join("\n")}
+=== TYPOGRAPHY DISCIPLINE ===
+- Display headings: clamp(2.5rem, 6vw, 4.5rem), line-height 1.05-1.15, letter-spacing -0.02em, weight 700-800.
+- Section headings: clamp(1.75rem, 3.5vw, 2.75rem).
+- Body: 1rem-1.125rem, line-height 1.65, max-width 65ch.
+- Small eyebrow labels: 0.75rem, uppercase, letter-spacing 0.12em, in --accent.
+- Establish a clear size jump between levels. Timid type is the single most common way a page looks amateur.
+
+=== LAYOUT AMBITION ===
+- Generous vertical rhythm: 5rem-8rem section padding. Cramped spacing reads as cheap.
+- VARY the sections. Across the page use several of: a full-bleed dark or primary-coloured band; an asymmetric split (7/5 or 8/4, never a plain 50/50 every time); an overlapping element using negative margin; an offset or masonry-ish grid; a wide image that breaks out of the container.
+- At least ONE section must be visually surprising — a big number, a full-bleed quote, a diagonal or curved divider, a sticky-feeling side label.
+- Never stack six identically centred sections in a row.
+
+=== DEPTH AND FINISH ===
+- Layered shadows, not one flat blur: e.g. 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(0,0,0,.08).
+- A consistent radius scale (e.g. 8px small, 16px cards, 28px feature panels).
+- Consider a subtle grain or mesh-gradient backdrop on one dark section.
+- Buttons: real presence — solid fill, adequate padding (0.9rem 1.6rem), clear hover and visible :focus-visible ring.
+
+=== COPY ===
+Real, specific, concrete. Actual names, numbers, places and detail drawn from the source material. Never "Lorem ipsum", never "Feature One", never "Your Company".
+
+=== TECHNICAL ===
+- Output ONE complete document: <!doctype html> through </html>. Nothing before or after it. No markdown fences.
+- All CSS in a single <style> block in the head. No external stylesheets besides Google Fonts.
+- ZERO JavaScript. No <script> tags — scripts never execute here, so anything relying on JS will look broken.
+- Fully responsive: CSS grid and flexbox, clamp(), and real media queries. Check the mobile layout of every section.
+- Semantic HTML: header, nav, main, section, footer, correct heading hierarchy.
+- Accessible: strong contrast, alt text on photographs, aria-hidden on decorative SVG, visible focus styles.
+
+=== SECTIONS TO BUILD (in order) ===
+Each carries a TREATMENT. Implement it literally — this is what stops the page becoming a stack of identical centred blocks.
+
+${id.outline
+  .map((s, i) => {
+    const note = TREATMENT_NOTES[s.treatment] ?? "";
+    return `${i + 1}. ${s.title} — ${s.intent}\n   TREATMENT: ${s.treatment}${note ? ` (${note})` : ""}`;
+  })
+  .join("\n")}
 
 Return only the HTML document.`;
 }
@@ -233,6 +314,34 @@ function tooSimilar(a: string, b: string): boolean {
 
   const hueGap = Math.min(Math.abs(x.h - y.h), 360 - Math.abs(x.h - y.h));
   return hueGap < 40;
+}
+
+/**
+ * Enforce the variety the prompt asks for. Models drift toward repeating a
+ * comfortable treatment, and back-to-back repeats are exactly what makes a page
+ * look like a template.
+ */
+function spreadTreatments(outline: OutlineEntry[]): OutlineEntry[] {
+  const used = new Map<string, number>();
+
+  return outline.map((section, index) => {
+    let treatment = TREATMENTS.includes(section.treatment as (typeof TREATMENTS)[number])
+      ? section.treatment
+      : "card-grid";
+
+    const previous = index > 0 ? outline[index - 1].treatment : null;
+    const overused = (used.get(treatment) ?? 0) >= 2;
+
+    if (treatment === previous || overused) {
+      const alternative = TREATMENTS.find(
+        (t) => t !== previous && t !== treatment && (used.get(t) ?? 0) === 0,
+      );
+      if (alternative) treatment = alternative;
+    }
+
+    used.set(treatment, (used.get(treatment) ?? 0) + 1);
+    return { ...section, treatment };
+  });
 }
 
 /** Guard against a malformed hex reaching the generated stylesheet. */
@@ -370,7 +479,7 @@ export async function generateHomepage(
       items: (parsed.nav?.items ?? []).slice(0, 5),
       ctaLabel: parsed.nav?.ctaLabel || "Get in touch",
     };
-    parsed.outline = (parsed.outline ?? []).slice(0, 10);
+    parsed.outline = spreadTreatments((parsed.outline ?? []).slice(0, 10));
     parsed.improvements = parsed.improvements ?? [];
 
     if (parsed.outline.length === 0) {
@@ -399,8 +508,9 @@ export async function generateHomepage(
   try {
     pageCompletion = await openai.chat.completions.create({
       model,
-      temperature: 0.8,
-      max_completion_tokens: 12_000,
+      temperature: 0.85,
+      // Polish lives in the details that get cut first when the budget is tight.
+      max_completion_tokens: 16_000,
       messages: [
         { role: "system", content: pageSystemPrompt(identity) },
         {

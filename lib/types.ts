@@ -9,10 +9,15 @@ export type Palette = {
   rationale: string;
 };
 
-/** A section the model decided the page needs. Free-form — not a template. */
+/**
+ * A section the model decided the page needs. Free-form — not a template.
+ * `treatment` is chosen per section so layout variety is decided up front
+ * rather than hoped for while the page is being written.
+ */
 export type OutlineEntry = {
   title: string;
   intent: string;
+  treatment: string;
 };
 
 export type Identity = {

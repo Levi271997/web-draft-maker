@@ -112,13 +112,31 @@ npm run build   # production build
 There is no block library and no template. The model is told what the brand is
 and what the page must achieve, then designs it.
 
-Constraints given to the page pass are technical, not stylistic:
+The page pass gets both technical constraints and real art direction — the
+second matters more than expected. Given only technical rules, a model outputs
+the median of its training data, which is a generic corporate template.
 
 - One complete document; all CSS in a single `<style>`; Google Fonts by `<link>`
-- **Zero JavaScript** — it renders in a script-free sandbox, so JS would break
-- **No external images** — every remote URL would 404, so imagery is CSS
-  gradients, geometric shapes and inline SVG the model writes itself
+- **Zero JavaScript** — it renders in a script-free sandbox, so JS would break.
+  Motion is CSS only: transitions, `@keyframes` entrances, hover lifts, all
+  wrapped in `prefers-reduced-motion`.
+- **Real photography** from `picsum.photos/seed/WORD/W/H`, a different seed per
+  image, art-directed with brand-gradient overlays so they don't read as stock.
+  A sandboxed iframe blocks scripts, not image loading.
+- A stated type scale, spacing rhythm, layered shadows and radius scale
 - Responsive with grid/flex, `clamp()` and media queries; semantic HTML
+
+### Layout treatments
+
+Asking a model to "vary the section rhythm" produced six stacked centred
+sections. So the identity pass assigns each section an explicit **treatment**
+from a fixed set — `full-bleed-image`, `dark-band`, `split-image-left`,
+`card-grid`, `overlap-feature`, `gallery-mosaic`, `stat-strip`,
+`quote-feature`, and so on — which the page pass then implements literally.
+
+Variety is enforced server-side rather than requested: no treatment twice in a
+row, none more than twice overall. Measured on a restaurant brief: 7 sections,
+7 distinct treatments, 0 back-to-back repeats, 8 photographs.
 
 ### Rendering safely
 

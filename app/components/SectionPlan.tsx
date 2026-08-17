@@ -32,8 +32,13 @@ export default function SectionPlan({
               {index + 1}
             </span>
             <div className="min-w-0">
-              <h3 className="font-heading text-base font-bold text-ink">
+              <h3 className="flex flex-wrap items-center gap-2 font-heading text-base font-bold text-ink">
                 {section.title}
+                {section.treatment && (
+                  <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] font-normal text-ink-soft">
+                    {section.treatment}
+                  </span>
+                )}
               </h3>
               <p className="mt-0.5 text-sm text-ink-soft">{section.intent}</p>
             </div>
