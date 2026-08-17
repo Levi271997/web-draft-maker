@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+/*
+ * Digitalfeet brand system
+ * Tokens extracted from https://webcalculator-v2.vercel.app/en/audit
+ */
+
+:root {
+  --background: #f7fafc;
+  --foreground: #131028;
+  --gradient-brand: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+@theme {
+  /* Core brand palette */
+  --color-purple: #1e1242;
+  --color-brand: #4826ad;
+  --color-brand-dark: #3d2788;
+  --color-accent: #fab84f;
+  --color-accent-dark: #f59e0b;
+  --color-ink: #131028;
+  --color-ink-soft: #4a5568;
+  --color-cream: #f7fafc;
+  --color-blue: #009fe3;
+
+  /* Type families */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-ubuntu), var(--font-inter), system-ui, sans-serif;
+
+  /* Type scale */
+  --text-h1-m: 30px;
+  --text-h1-m--line-height: 36px;
+  --text-h2: 48px;
+  --text-h2--line-height: 57.6px;
+  --text-h3: 32px;
+  --text-h3--line-height: 40px;
+  --text-h3-m: 20px;
+  --text-h3-m--line-height: 24px;
+  --text-h4: 24px;
+  --text-h4--line-height: 28.8px;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Brand gradient surface, used for the hero eyebrow accent */
+.gradient-brand {
+  background: var(--gradient-brand);
+}
+
+@keyframes df-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.df-spin {
+  animation: df-spin 0.7s linear infinite;
+}
+
+@keyframes df-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.df-fade-up {
+  animation: df-fade-up 0.35s ease-out both;
+}
