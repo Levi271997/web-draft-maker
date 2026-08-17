@@ -1,8 +1,17 @@
 # AI Homepage Generator — Digitalfeet
 
-Enter a website URL, press **Create Homepage**, and the app reads that site's
-real branding (palette, typefaces, voice, copy) and uses OpenAI to generate a
-homepage recommendation built around it.
+Two ways in, one output:
+
+- **I have a website** (the default, and most Digitalfeet clients) — enter the
+  URL and the app reads that site's real branding (palette, typefaces, voice,
+  copy) and rebuilds the homepage around it.
+- **Starting from scratch** — no site yet, so a short brief (business name and
+  what you do are required; industry, audience, style and a preferred colour
+  sharpen it) stands in for the scrape, and the identity is designed from
+  nothing.
+
+Either way, OpenAI composes the page from the approved block library and the
+result renders the same.
 
 Styled with the Digitalfeet brand system extracted from
 [webcalculator-v2.vercel.app/en/audit](https://webcalculator-v2.vercel.app/en/audit).
@@ -30,8 +39,10 @@ npm run build   # production build
 
 ## How it works
 
-1. **Scrape** — [lib/scrape.ts](lib/scrape.ts) fetches the URL plus up to four
-   linked stylesheets, then extracts:
+1. **Gather** — on the brief path, [lib/brief.ts](lib/brief.ts) validates the
+   form and turns it into prompt input. On the URL path,
+   [lib/scrape.ts](lib/scrape.ts) fetches the URL plus up to four linked
+   stylesheets, then extracts:
    - **Colors** ranked by frequency, weighted toward saturated mid-tones so real
      brand colors outrank framework greys.
    - **Typefaces** from `@font-face`, `font-family` stacks, and Google Fonts

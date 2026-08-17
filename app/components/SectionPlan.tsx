@@ -1,9 +1,11 @@
-import type { Recommendation } from "@/lib/types";
+import type { GenerateMode, Recommendation } from "@/lib/types";
 import { BLOCK_LIBRARY } from "@/lib/blocks";
 
 export default function SectionPlan({
+  mode,
   recommendation,
 }: {
+  mode: GenerateMode;
   recommendation: Recommendation;
 }) {
   const { blocks, seo, improvements } = recommendation;
@@ -55,7 +57,9 @@ export default function SectionPlan({
       {improvements.length > 0 && (
         <div className="mt-8">
           <h3 className="font-heading text-base font-bold text-ink">
-            Fix these on your current homepage
+            {mode === "url"
+              ? "Fix these on your current homepage"
+              : "Prepare these before launch"}
           </h3>
           <ul className="mt-3 flex flex-col gap-2">
             {improvements.map((item, index) => (

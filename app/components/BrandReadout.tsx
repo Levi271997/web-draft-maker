@@ -1,6 +1,7 @@
-import type { BrandSummary, Recommendation } from "@/lib/types";
+import type { BrandSummary, GenerateMode, Recommendation } from "@/lib/types";
 
 type Props = {
+  mode: GenerateMode;
   brand: BrandSummary;
   recommendation: Recommendation;
 };
@@ -15,8 +16,10 @@ const PALETTE_ROLES = [
   { key: "textMuted", label: "Muted text" },
 ] as const;
 
-export default function BrandReadout({ brand, recommendation }: Props) {
+export default function BrandReadout({ mode, brand, recommendation }: Props) {
   const { palette, typography } = recommendation;
+  const fromUrl = mode === "url";
+
   let host = brand.finalUrl;
   try {
     host = new URL(brand.finalUrl).hostname.replace(/^www\./, "");
@@ -29,13 +32,14 @@ export default function BrandReadout({ brand, recommendation }: Props) {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="mb-1 font-heading text-xs font-medium tracking-wide text-brand uppercase">
-            Step 1 · What we detected
+            Step 1 · {fromUrl ? "What we detected" : "The identity we designed"}
           </p>
           <h2 className="font-heading text-h3-m font-bold text-ink sm:text-h4">
             {recommendation.brand.name}
           </h2>
           <p className="mt-1 text-sm text-ink-soft">
-            {host} · {recommendation.brand.industry}
+            {fromUrl && host ? `${host} · ` : ""}
+            {recommendation.brand.industry}
           </p>
         </div>
         {brand.logo && (
@@ -74,7 +78,7 @@ export default function BrandReadout({ brand, recommendation }: Props) {
         </div>
       </dl>
 
-      {brand.colors.length > 0 && (
+      {fromUrl && brand.colors.length > 0 && (
         <div className="mt-6">
           <h3 className="mb-2 text-xs font-semibold tracking-wide text-ink-soft uppercase">
             Colors found on your site
@@ -98,7 +102,7 @@ export default function BrandReadout({ brand, recommendation }: Props) {
 
       <div className="mt-6">
         <h3 className="mb-2 text-xs font-semibold tracking-wide text-ink-soft uppercase">
-          Recommended palette
+          {fromUrl ? "Recommended palette" : "Your new palette"}
         </h3>
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {PALETTE_ROLES.map(({ key, label }) => (
@@ -126,7 +130,7 @@ export default function BrandReadout({ brand, recommendation }: Props) {
         </p>
       </div>
 
-      {brand.fonts.length > 0 && (
+      {fromUrl && brand.fonts.length > 0 && (
         <div className="mt-6">
           <h3 className="mb-2 text-xs font-semibold tracking-wide text-ink-soft uppercase">
             Typefaces found on your site

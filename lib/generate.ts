@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ScrapedBrand } from "./scrape";
+import { briefToPrompt, type Brief } from "./brief";
 import type { Block, BlockItem, Palette, Recommendation } from "./types";
 import {
   BLOCK_LIBRARY,
@@ -116,7 +117,7 @@ const SCHEMA = {
     },
     improvements: {
       type: "array",
-      description: "4-6 specific, actionable recommendations for their current homepage.",
+      description: "4-6 specific, actionable recommendations. See the user message for what to aim them at.",
       items: { type: "string" },
     },
   },
@@ -124,7 +125,7 @@ const SCHEMA = {
 
 const SYSTEM_PROMPT = `You are a senior brand and conversion designer at Digitalfeet.
 
-You receive branding signals scraped from a real website: its palette, type stacks, headings, nav, and body copy. You assemble a homepage for that brand using ONLY the approved Digitalfeet block library below. Each block is an existing, signed-off template — you choose which blocks to use, in what order, with which variant, and you write the copy that fills them.
+You are given either (a) branding signals scraped from a client's existing website, or (b) a short brief from a client who has no website yet. From that, you assemble a homepage using ONLY the approved Digitalfeet block library below. Each block is an existing, signed-off template — you choose which blocks to use, in what order, with which variant, and you write the copy that fills them.
 
 APPROVED BLOCK LIBRARY
 ${blockCatalogueForPrompt()}
@@ -137,15 +138,29 @@ Composition rules:
 - Respect each block's item count and item shape exactly. Fields a block doesn't use must be an empty string or empty array — never filler text, never "N/A".
 
 Branding rules:
-- Ground every choice in the evidence provided. Reuse the site's own colors and typefaces where they work.
-- The scraped color list is ranked by prominence but is noisy: it includes framework defaults and greys. Pick the hexes that read as genuine brand colors, and only invent a hex when the evidence gives you nothing usable.
+- Ground every choice in the evidence provided. When a site was scraped, reuse its own colors and typefaces where they work.
+- A scraped color list is ranked by prominence but is noisy: it includes framework defaults and greys. Pick the hexes that read as genuine brand colors, and only invent a hex when the evidence gives you nothing usable.
+- When there is no existing website, design the identity from scratch: choose a palette and type pairing that suit the stated industry, audience and style preference. If the client named a colour they want, build the palette around it.
 - "accent" is used for small eyebrow labels and highlights, so it should differ from "primary", which is used for buttons.
 - Ensure strong contrast between "text" and "background". Never return a light-on-light or dark-on-dark pair.
 - All colors must be 6-digit hex, lowercase, with a leading #.
 - Write copy in the brand's own voice and language. If the site is not in English, write the copy in the site's language.
 - Be concrete. No filler like "Lorem ipsum", "Your Company", or "Welcome to our website".`;
 
-function buildUserPrompt(b: ScrapedBrand): string {
+export type BrandSource =
+  | { kind: "url"; brand: ScrapedBrand }
+  | { kind: "brief"; brief: Brief };
+
+function buildUserPrompt(source: BrandSource): string {
+  if (source.kind === "brief") {
+    return [
+      briefToPrompt(source.brief),
+      "",
+      "Because there is no current homepage to critique, use `improvements` for 4-6 things this brand should prepare or prioritise before launch (assets to gather, proof to collect, decisions to make).",
+    ].join("\n");
+  }
+
+  const b = source.brand;
   const lines: string[] = [
     `Website: ${b.finalUrl}`,
     b.siteName ? `Site name: ${b.siteName}` : "",
@@ -161,6 +176,8 @@ function buildUserPrompt(b: ScrapedBrand): string {
     "",
     "Visible page copy (truncated):",
     b.bodyText || "(no readable copy found)",
+    "",
+    "Use `improvements` for 4-6 specific fixes to their CURRENT homepage.",
   ];
 
   return lines.filter(Boolean).join("\n");
@@ -261,7 +278,7 @@ function sanitizeBlocks(blocks: Block[]): Block[] {
   return cleaned;
 }
 
-export async function generateHomepage(brand: ScrapedBrand): Promise<Recommendation> {
+export async function generateHomepage(source: BrandSource): Promise<Recommendation> {
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey || apiKey.startsWith("sk-your") || apiKey === "REPLACE_ME") {
@@ -280,7 +297,7 @@ export async function generateHomepage(brand: ScrapedBrand): Promise<Recommendat
       temperature: 0.7,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserPrompt(brand) },
+        { role: "user", content: buildUserPrompt(source) },
       ],
       response_format: {
         type: "json_schema",
