@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { GenerateMode, GenerateResponse } from "@/lib/types";
-import { STYLE_OPTIONS } from "@/lib/brief";
+import type { Brief } from "@/lib/brief";
+import type { RefineKey } from "@/lib/refine";
+import BriefWizard from "./BriefWizard";
 import BrandReadout from "./BrandReadout";
 import HomepagePreview from "./HomepagePreview";
 import SectionPlan from "./SectionPlan";
+import RefineBar from "./RefineBar";
 
 const EXAMPLES = ["stripe.com", "linear.app", "digitalfeet.com"];
 
@@ -17,58 +20,53 @@ const TABS: { id: GenerateMode; label: string; hint: string }[] = [
   },
   {
     id: "brief",
-    label: "Starting from scratch",
-    hint: "No site yet? Tell us about the business and we'll design one.",
+    label: "I don't have one yet",
+    hint: "Answer four quick questions and we'll design your first one.",
   },
 ];
 
-const inputClass =
-  "w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-base text-ink outline-none transition placeholder:text-gray-400 focus:border-brand focus:ring-2 focus:ring-brand/25 disabled:bg-gray-50 disabled:text-gray-400";
+/** What produced the current result, so a refine can re-send the same input. */
+type LastRequest =
+  | { mode: "url"; url: string }
+  | { mode: "brief"; brief: Brief };
 
-export default function GeneratorForm() {
+export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
   const [mode, setMode] = useState<GenerateMode>("url");
   const [url, setUrl] = useState("");
-  const [brief, setBrief] = useState({
-    name: "",
-    description: "",
-    industry: "",
-    audience: "",
-    style: "",
-    color: "",
-  });
 
   const [loading, setLoading] = useState(false);
+  const [refining, setRefining] = useState<RefineKey | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GenerateResponse | null>(null);
 
-  const canSubmit =
-    mode === "url"
-      ? url.trim().length > 0
-      : brief.name.trim().length > 0 && brief.description.trim().length >= 20;
+  const lastRequest = useRef<LastRequest | null>(null);
+  const resultsRef = useRef<HTMLDivElement | null>(null);
 
-  function switchMode(next: GenerateMode) {
-    if (next === mode || loading) return;
-    setMode(next);
-    setError(null);
-  }
+  async function run(
+    request: LastRequest,
+    refine?: RefineKey,
+    avoidPrimary?: string,
+  ) {
+    if (loading) return;
 
-  function updateBrief(field: keyof typeof brief, value: string) {
-    setBrief((prev) => ({ ...prev, [field]: value }));
-  }
-
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    if (loading || !canSubmit) return;
-
+    lastRequest.current = request;
     setLoading(true);
+    setRefining(refine ?? null);
     setError(null);
-    setResult(null);
+    // Keep the old result on screen while refining, so the page doesn't
+    // collapse under the user mid-scroll.
+    if (!refine) setResult(null);
 
     try {
+      const body =
+        request.mode === "url"
+          ? { mode: "url", url: request.url, refine, avoidPrimary }
+          : { mode: "brief", brief: request.brief, refine, avoidPrimary };
+
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(mode === "url" ? { mode, url } : { mode, brief }),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json();
@@ -79,11 +77,27 @@ export default function GeneratorForm() {
       }
 
       setResult(data as GenerateResponse);
+
+      if (refine) {
+        resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     } catch {
       setError("Couldn't reach the server. Check your connection and try again.");
     } finally {
       setLoading(false);
+      setRefining(null);
     }
+  }
+
+  function handleRefine(key: RefineKey) {
+    if (!lastRequest.current) return;
+    run(lastRequest.current, key, result?.recommendation.palette.primary);
+  }
+
+  function switchMode(next: GenerateMode) {
+    if (next === mode || loading) return;
+    setMode(next);
+    setError(null);
   }
 
   const activeTab = TABS.find((t) => t.id === mode)!;
@@ -91,7 +105,6 @@ export default function GeneratorForm() {
   return (
     <div className="flex flex-col gap-8">
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 sm:p-8">
-        {/* Path picker */}
         <div
           role="tablist"
           aria-label="How would you like to start?"
@@ -108,9 +121,7 @@ export default function GeneratorForm() {
                 disabled={loading}
                 onClick={() => switchMode(tab.id)}
                 className={`rounded-lg px-3 py-2.5 font-heading text-sm font-bold transition disabled:cursor-not-allowed ${
-                  active
-                    ? "bg-white text-brand shadow-sm"
-                    : "text-ink-soft hover:text-ink"
+                  active ? "bg-white text-brand shadow-sm" : "text-ink-soft hover:text-ink"
                 }`}
               >
                 {tab.label}
@@ -119,11 +130,16 @@ export default function GeneratorForm() {
           })}
         </div>
 
-        <p className="mb-5 text-sm text-ink-soft">{activeTab.hint}</p>
-
-        <form onSubmit={handleSubmit} noValidate>
-          {mode === "url" ? (
-            <>
+        {mode === "url" ? (
+          <>
+            <p className="mb-5 text-sm text-ink-soft">{activeTab.hint}</p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (url.trim()) run({ mode: "url", url });
+              }}
+              noValidate
+            >
               <label
                 htmlFor="site-url"
                 className="mb-2 block font-heading text-h3-m font-bold text-ink"
@@ -147,9 +163,21 @@ export default function GeneratorForm() {
                   placeholder="yourcompany.com"
                   disabled={loading}
                   aria-describedby={error ? "form-error" : undefined}
-                  className={`min-w-0 flex-1 ${inputClass}`}
+                  className="min-w-0 flex-1 rounded-xl border border-gray-300 bg-white px-4 py-3 text-base text-ink outline-none transition placeholder:text-gray-400 focus:border-brand focus:ring-2 focus:ring-brand/25 disabled:bg-gray-50 disabled:text-gray-400"
                 />
-                <SubmitButton loading={loading} disabled={!canSubmit} />
+                <button
+                  type="submit"
+                  disabled={loading || !url.trim()}
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-6 py-3 font-heading text-base font-bold text-white shadow-sm transition hover:bg-brand-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  {loading && (
+                    <span
+                      aria-hidden="true"
+                      className="df-spin size-4 rounded-full border-2 border-white/40 border-t-white"
+                    />
+                  )}
+                  {loading ? "Generating…" : "Create Homepage"}
+                </button>
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -166,111 +194,14 @@ export default function GeneratorForm() {
                   </button>
                 ))}
               </div>
-            </>
-          ) : (
-            <>
-              <h2 className="mb-2 font-heading text-h3-m font-bold text-ink">
-                Tell us about your business
-              </h2>
-              <p className="mb-5 text-sm text-ink-soft">
-                Two fields are required. The rest sharpen the result.
-              </p>
-
-              <div className="flex flex-col gap-4">
-                <Field
-                  id="brief-name"
-                  label="Business name"
-                  required
-                  value={brief.name}
-                  onChange={(v) => updateBrief("name", v)}
-                  placeholder="Nordic Rail Consulting"
-                  disabled={loading}
-                />
-
-                <div>
-                  <label
-                    htmlFor="brief-description"
-                    className="mb-1.5 block text-sm font-semibold text-ink"
-                  >
-                    What do you do?{" "}
-                    <span className="font-normal text-brand">required</span>
-                  </label>
-                  <textarea
-                    id="brief-description"
-                    rows={4}
-                    value={brief.description}
-                    onChange={(e) => updateBrief("description", e.target.value)}
-                    placeholder="We help regional rail operators plan track maintenance so they cut unplanned downtime. We've run 40+ projects across Norway and Sweden."
-                    disabled={loading}
-                    className={`${inputClass} resize-y`}
-                  />
-                  <p className="mt-1 text-xs text-ink-soft">
-                    {brief.description.trim().length < 20
-                      ? "A sentence or two — what you sell and what makes you different."
-                      : "Looks good."}
-                  </p>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field
-                    id="brief-industry"
-                    label="Industry"
-                    value={brief.industry}
-                    onChange={(v) => updateBrief("industry", v)}
-                    placeholder="Rail infrastructure"
-                    disabled={loading}
-                  />
-                  <Field
-                    id="brief-audience"
-                    label="Who is it for?"
-                    value={brief.audience}
-                    onChange={(v) => updateBrief("audience", v)}
-                    placeholder="Operations managers at rail operators"
-                    disabled={loading}
-                  />
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label
-                      htmlFor="brief-style"
-                      className="mb-1.5 block text-sm font-semibold text-ink"
-                    >
-                      Style you want
-                    </label>
-                    <select
-                      id="brief-style"
-                      value={brief.style}
-                      onChange={(e) => updateBrief("style", e.target.value)}
-                      disabled={loading}
-                      className={inputClass}
-                    >
-                      <option value="">No preference</option>
-                      {STYLE_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <Field
-                    id="brief-color"
-                    label="Brand colour, if you have one"
-                    value={brief.color}
-                    onChange={(v) => updateBrief("color", v)}
-                    placeholder="#1e1242 or 'deep navy'"
-                    disabled={loading}
-                  />
-                </div>
-
-                <div className="pt-1">
-                  <SubmitButton loading={loading} disabled={!canSubmit} />
-                </div>
-              </div>
-            </>
-          )}
-        </form>
+            </form>
+          </>
+        ) : (
+          <BriefWizard
+            loading={loading}
+            onSubmit={(brief) => run({ mode: "brief", brief })}
+          />
+        )}
 
         {error && (
           <p
@@ -283,80 +214,31 @@ export default function GeneratorForm() {
         )}
       </section>
 
-      {loading && <LoadingState mode={mode} />}
+      {loading && !result && <LoadingState mode={mode} />}
 
       {result && (
-        <div className="df-fade-up flex flex-col gap-8">
+        <div
+          ref={resultsRef}
+          className={`df-fade-up flex flex-col gap-8 transition-opacity ${
+            loading ? "opacity-50" : ""
+          }`}
+        >
           <BrandReadout
             mode={result.mode}
             brand={result.brand}
             recommendation={result.recommendation}
           />
           <HomepagePreview recommendation={result.recommendation} />
+          <RefineBar
+            loading={loading}
+            pending={refining}
+            onRefine={handleRefine}
+            bookingUrl={bookingUrl}
+          />
           <SectionPlan mode={result.mode} recommendation={result.recommendation} />
         </div>
       )}
     </div>
-  );
-}
-
-function Field({
-  id,
-  label,
-  value,
-  onChange,
-  placeholder,
-  disabled,
-  required = false,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  disabled: boolean;
-  required?: boolean;
-}) {
-  return (
-    <div>
-      <label htmlFor={id} className="mb-1.5 block text-sm font-semibold text-ink">
-        {label}{" "}
-        {required && <span className="font-normal text-brand">required</span>}
-      </label>
-      <input
-        id={id}
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        disabled={disabled}
-        className={inputClass}
-      />
-    </div>
-  );
-}
-
-function SubmitButton({
-  loading,
-  disabled,
-}: {
-  loading: boolean;
-  disabled: boolean;
-}) {
-  return (
-    <button
-      type="submit"
-      disabled={loading || disabled}
-      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-6 py-3 font-heading text-base font-bold text-white shadow-sm transition hover:bg-brand-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-55"
-    >
-      {loading && (
-        <span
-          aria-hidden="true"
-          className="df-spin size-4 rounded-full border-2 border-white/40 border-t-white"
-        />
-      )}
-      {loading ? "Generating…" : "Create Homepage"}
-    </button>
   );
 }
 
@@ -369,7 +251,7 @@ function LoadingState({ mode }: { mode: GenerateMode }) {
           "Choosing blocks and writing copy",
         ]
       : [
-          "Reading your brief",
+          "Reading your answers",
           "Designing a palette and type pairing",
           "Choosing blocks and writing copy",
         ];

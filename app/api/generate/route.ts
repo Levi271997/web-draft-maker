@@ -1,11 +1,28 @@
 import { NextResponse } from "next/server";
 import { scrapeBrand } from "@/lib/scrape";
 import { parseBrief } from "@/lib/brief";
+import { isRefineKey, refineInstruction } from "@/lib/refine";
 import { generateHomepage, type BrandSource } from "@/lib/generate";
 import type { BrandSummary } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
+
+/**
+ * The brief can carry a Facebook page or listing URL. Many of these sit behind
+ * a login wall, so this is strictly best-effort: anything we get is a bonus and
+ * a failure must never fail the request.
+ */
+async function tryExtraCopy(url: string): Promise<string | undefined> {
+  if (!url.trim()) return undefined;
+  try {
+    const scraped = await scrapeBrand(url);
+    const text = scraped.bodyText.trim();
+    return text.length > 120 ? text.slice(0, 2000) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>;
@@ -18,27 +35,39 @@ export async function POST(request: Request) {
 
   const mode = body?.mode === "brief" ? "brief" : "url";
 
+  const refineKey = isRefineKey(body?.refine) ? body.refine : undefined;
+  const refinement = refineKey
+    ? refineInstruction(refineKey, body?.avoidPrimary)
+    : undefined;
+
+  // Only enforce a hue change when they actually asked for one.
+  const avoidPrimary =
+    refineKey === "colours" && typeof body?.avoidPrimary === "string"
+      ? body.avoidPrimary
+      : undefined;
+
   let source: BrandSource;
   let summary: BrandSummary;
 
-  // Both branches produce a 422 for bad input, so the client can show the
-  // message inline rather than treating it as a server failure.
   if (mode === "brief") {
+    let brief;
     try {
-      const brief = parseBrief(body?.brief);
-      source = { kind: "brief", brief };
-      summary = {
-        finalUrl: "",
-        siteName: brief.name,
-        title: null,
-        logo: null,
-        colors: [],
-        fonts: [],
-      };
+      brief = parseBrief(body?.brief);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Please check the form.";
+      const message = err instanceof Error ? err.message : "Please check your answers.";
       return NextResponse.json({ error: message }, { status: 422 });
     }
+
+    const extraCopy = await tryExtraCopy(brief.sourceUrl);
+    source = { kind: "brief", brief, extraCopy };
+    summary = {
+      finalUrl: "",
+      siteName: brief.name,
+      title: null,
+      logo: null,
+      colors: [],
+      fonts: [],
+    };
   } else {
     const url = typeof body?.url === "string" ? body.url : "";
     if (!url.trim()) {
@@ -63,7 +92,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const recommendation = await generateHomepage(source);
+    const recommendation = await generateHomepage(source, { refinement, avoidPrimary });
     return NextResponse.json({ mode, brand: summary, recommendation });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Generation failed.";

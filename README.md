@@ -5,13 +5,42 @@ Two ways in, one output:
 - **I have a website** (the default, and most Digitalfeet clients) — enter the
   URL and the app reads that site's real branding (palette, typefaces, voice,
   copy) and rebuilds the homepage around it.
-- **Starting from scratch** — no site yet, so a short brief (business name and
-  what you do are required; industry, audience, style and a preferred colour
-  sharpen it) stands in for the scrape, and the identity is designed from
-  nothing.
+- **I don't have one yet** — a four-step guided flow written for someone who
+  has never had a website and doesn't know web vocabulary.
 
 Either way, OpenAI composes the page from the approved block library and the
-result renders the same.
+result renders the same. Under every preview sit plain-language refine buttons
+and a booking CTA.
+
+## The guided flow
+
+Designed so nothing asks the client to describe their own brand:
+
+1. **What kind of business is it?** — 12 icon tiles. Recognition beats recall,
+   and the pick seeds everything downstream.
+2. **Name + one line** — the line arrives **pre-filled** from the business type,
+   so nobody meets an empty box. Optionally paste a Facebook page or listing;
+   we scrape what we can and silently skip it if it's private.
+3. **What should the website do?** — multi-select outcomes (get calls, take
+   bookings, sell online, show my work, explain services, be found on Google).
+   This is the highest-value question: each goal maps to blocks in
+   [lib/brief.ts](lib/brief.ts), so goals *drive page structure* instead of the
+   model guessing at it.
+4. **Which of these feels like you?** — four small rendered mockups rather than
+   adjectives, plus colour swatches rather than a hex field.
+
+## The refine loop
+
+Clients can't say what's wrong with a design, but they can react to one. Under
+the preview: *Friendlier · More formal · Different colours · Shorter text · Add
+prices · Try again*. Each re-runs generation with a fixed instruction; the keys
+are a closed set in [lib/refine.ts](lib/refine.ts), so nothing from the browser
+reaches the prompt as free text.
+
+**Different colours** is enforced, not requested. Models tend to nudge the shade
+(`#ea580c` → `#d35400`) which reads as a broken button, so the returned primary
+is converted to HSL and retried once if its hue is within 40° of the previous
+one. Measured over three runs: orange → blue every time, ~176° apart.
 
 Styled with the Digitalfeet brand system extracted from
 [webcalculator-v2.vercel.app/en/audit](https://webcalculator-v2.vercel.app/en/audit).

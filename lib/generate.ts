@@ -149,15 +149,11 @@ Branding rules:
 
 export type BrandSource =
   | { kind: "url"; brand: ScrapedBrand }
-  | { kind: "brief"; brief: Brief };
+  | { kind: "brief"; brief: Brief; extraCopy?: string };
 
 function buildUserPrompt(source: BrandSource): string {
   if (source.kind === "brief") {
-    return [
-      briefToPrompt(source.brief),
-      "",
-      "Because there is no current homepage to critique, use `improvements` for 4-6 things this brand should prepare or prioritise before launch (assets to gather, proof to collect, decisions to make).",
-    ].join("\n");
+    return briefToPrompt(source.brief, source.extraCopy);
   }
 
   const b = source.brand;
@@ -184,6 +180,44 @@ function buildUserPrompt(source: BrandSource): string {
 }
 
 const HEX_RE = /^#[0-9a-f]{6}$/;
+
+function toHsl(hex: string): { h: number; s: number; l: number } {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+
+  if (d === 0) return { h: 0, s: 0, l };
+
+  const s = d / (1 - Math.abs(2 * l - 1));
+  let h: number;
+  if (max === r) h = 60 * (((g - b) / d) % 6);
+  else if (max === g) h = 60 * ((b - r) / d + 2);
+  else h = 60 * ((r - g) / d + 4);
+
+  return { h: (h + 360) % 360, s, l };
+}
+
+/**
+ * "Different colours" must look different to a non-designer. Models tend to
+ * nudge the shade (#ea580c -> #d35400) rather than change hue, which reads as
+ * a broken button.
+ */
+function tooSimilar(a: string, b: string): boolean {
+  if (!HEX_RE.test(a) || !HEX_RE.test(b)) return false;
+
+  const x = toHsl(a);
+  const y = toHsl(b);
+
+  // Both effectively neutral: only a clear lightness shift counts as different.
+  if (x.s < 0.15 && y.s < 0.15) return Math.abs(x.l - y.l) < 0.25;
+
+  const hueGap = Math.min(Math.abs(x.h - y.h), 360 - Math.abs(x.h - y.h));
+  return hueGap < 40;
+}
 
 /** Guard against a malformed hex slipping into inline styles. */
 function sanitizePalette(p: Palette): Palette {
@@ -278,7 +312,17 @@ function sanitizeBlocks(blocks: Block[]): Block[] {
   return cleaned;
 }
 
-export async function generateHomepage(source: BrandSource): Promise<Recommendation> {
+export type GenerateOptions = {
+  refinement?: string;
+  /** When set, a returned palette too close to this hue is retried once. */
+  avoidPrimary?: string;
+};
+
+export async function generateHomepage(
+  source: BrandSource,
+  options: GenerateOptions = {},
+): Promise<Recommendation> {
+  const { refinement, avoidPrimary } = options;
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey || apiKey.startsWith("sk-your") || apiKey === "REPLACE_ME") {
@@ -290,56 +334,80 @@ export async function generateHomepage(source: BrandSource): Promise<Recommendat
   const client = new OpenAI({ apiKey, timeout: 120_000, maxRetries: 2 });
   const model = process.env.OPENAI_MODEL || "gpt-4o";
 
-  let completion;
-  try {
-    completion = await client.chat.completions.create({
-      model,
-      temperature: 0.7,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserPrompt(source) },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "homepage_recommendation", strict: true, schema: SCHEMA },
-      },
-    });
-  } catch (err) {
-    const e = err as { status?: number; message?: string };
-    if (e.status === 401) throw new Error("OpenAI rejected the API key. Check OPENAI_API_KEY in .env.");
-    if (e.status === 429) throw new Error("OpenAI rate limit or quota reached. Check your plan and billing.");
-    if (e.status === 404) {
-      throw new Error(`The model "${model}" isn't available to this key. Set OPENAI_MODEL in .env to one you have access to.`);
+  const basePrompt = buildUserPrompt(source);
+
+  async function requestOnce(extra?: string): Promise<Recommendation> {
+    const userPrompt = [basePrompt, refinement, extra].filter(Boolean).join("\n\n");
+
+    let completion;
+    try {
+      completion = await client.chat.completions.create({
+        model,
+        // A refinement should visibly differ from what they just rejected.
+        temperature: refinement ? 0.9 : 0.7,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "homepage_recommendation", strict: true, schema: SCHEMA },
+        },
+      });
+    } catch (err) {
+      const e = err as { status?: number; message?: string };
+      if (e.status === 401) throw new Error("OpenAI rejected the API key. Check OPENAI_API_KEY in .env.");
+      if (e.status === 429) throw new Error("OpenAI rate limit or quota reached. Check your plan and billing.");
+      if (e.status === 404) {
+        throw new Error(`The model "${model}" isn't available to this key. Set OPENAI_MODEL in .env to one you have access to.`);
+      }
+      throw new Error(e.message || "The OpenAI request failed.");
     }
-    throw new Error(e.message || "The OpenAI request failed.");
+
+    const choice = completion.choices[0];
+    if (choice?.message?.refusal) {
+      throw new Error(`OpenAI declined the request: ${choice.message.refusal}`);
+    }
+
+    const raw = choice?.message?.content;
+    if (!raw) throw new Error("OpenAI returned an empty response. Try again.");
+
+    let parsed: Recommendation;
+    try {
+      parsed = JSON.parse(raw) as Recommendation;
+    } catch {
+      throw new Error("Couldn't parse the model response. Try again.");
+    }
+
+    parsed.palette = sanitizePalette(parsed.palette);
+    parsed.blocks = sanitizeBlocks(parsed.blocks);
+    parsed.nav = {
+      items: (parsed.nav?.items ?? []).slice(0, 5),
+      ctaLabel: parsed.nav?.ctaLabel || "Get in touch",
+    };
+    parsed.improvements = parsed.improvements ?? [];
+
+    if (parsed.blocks.length === 0) {
+      throw new Error("The model returned no usable blocks. Try again.");
+    }
+
+    return parsed;
   }
 
-  const choice = completion.choices[0];
-  if (choice?.message?.refusal) {
-    throw new Error(`OpenAI declined the request: ${choice.message.refusal}`);
+  const first = await requestOnce();
+
+  // The model tends to nudge the shade rather than change hue. If the client
+  // asked for different colours and got the same family back, insist once.
+  if (avoidPrimary && tooSimilar(first.palette.primary, avoidPrimary)) {
+    try {
+      const retry = await requestOnce(
+        `The palette you would normally choose is too close to ${avoidPrimary.toLowerCase()}. Pick a primary from a clearly DIFFERENT colour family — its hue must be at least 60 degrees away on the colour wheel. Do not simply darken or lighten the previous colour.`,
+      );
+      if (!tooSimilar(retry.palette.primary, avoidPrimary)) return retry;
+    } catch {
+      // A failed retry shouldn't cost the user the result we already have.
+    }
   }
 
-  const raw = choice?.message?.content;
-  if (!raw) throw new Error("OpenAI returned an empty response. Try again.");
-
-  let parsed: Recommendation;
-  try {
-    parsed = JSON.parse(raw) as Recommendation;
-  } catch {
-    throw new Error("Couldn't parse the model response. Try again.");
-  }
-
-  parsed.palette = sanitizePalette(parsed.palette);
-  parsed.blocks = sanitizeBlocks(parsed.blocks);
-  parsed.nav = {
-    items: (parsed.nav?.items ?? []).slice(0, 5),
-    ctaLabel: parsed.nav?.ctaLabel || "Get in touch",
-  };
-  parsed.improvements = parsed.improvements ?? [];
-
-  if (parsed.blocks.length === 0) {
-    throw new Error("The model returned no usable blocks. Try again.");
-  }
-
-  return parsed;
+  return first;
 }

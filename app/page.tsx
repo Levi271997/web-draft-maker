@@ -19,7 +19,9 @@ export default function Home() {
         </p>
       </header>
 
-      <GeneratorForm />
+      <GeneratorForm
+        bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL || "https://digitalfeet.com/contact"}
+      />
 
       <footer className="mt-12 text-center">
         <p className="text-xs text-ink-soft">
