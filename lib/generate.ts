@@ -1,38 +1,24 @@
 import OpenAI from "openai";
 import type { ScrapedBrand } from "./scrape";
 import { briefToPrompt, type Brief } from "./brief";
-import type { Block, BlockItem, Palette, Recommendation } from "./types";
-import {
-  BLOCK_LIBRARY,
-  BLOCK_TYPES,
-  VARIANTS,
-  blockCatalogueForPrompt,
-  resolveVariant,
-  type BlockType,
-} from "./blocks";
+import type { Identity, Palette, Recommendation } from "./types";
 
-/** Strict JSON schema — every property is required, per structured-output rules. */
-const ITEM_SCHEMA = {
+/**
+ * Two passes.
+ *
+ * 1. Identity — a small strict-JSON call that settles the brand, palette, type
+ *    pairing and page outline.
+ * 2. Page — a free-form call where the model writes the actual HTML and CSS.
+ *    Nothing constrains the layout: no block library, no fixed section types.
+ *
+ * Splitting them keeps the metadata reliably parseable while letting the page
+ * pass spend its whole budget on markup instead of JSON escaping.
+ */
+
+const IDENTITY_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["title", "description", "meta", "value", "bullets"],
-  properties: {
-    title: { type: "string", description: "Primary label. Empty string if unused." },
-    description: { type: "string", description: "Supporting sentence. Empty string if unused." },
-    meta: { type: "string", description: "Secondary label (role, category, period). Empty if unused." },
-    value: { type: "string", description: "Figure, price, step number, rating or date. Empty if unused." },
-    bullets: {
-      type: "array",
-      description: "Only for pricing plans — what the plan includes. Otherwise an empty array.",
-      items: { type: "string" },
-    },
-  },
-} as const;
-
-const SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["brand", "palette", "typography", "nav", "blocks", "seo", "improvements"],
+  required: ["brand", "palette", "typography", "nav", "outline", "seo", "improvements"],
   properties: {
     brand: {
       type: "object",
@@ -54,9 +40,9 @@ const SCHEMA = {
       ],
       properties: {
         primary: { type: "string", description: "Primary brand color as a 6-digit hex, e.g. #4826ad" },
-        primaryDark: { type: "string", description: "Darker primary for hover/dark surfaces, 6-digit hex." },
-        accent: { type: "string", description: "Accent color used for eyebrows and highlights, 6-digit hex." },
-        background: { type: "string", description: "Page background, 6-digit hex. Usually very light." },
+        primaryDark: { type: "string", description: "Darker primary for hover and deep surfaces, 6-digit hex." },
+        accent: { type: "string", description: "Accent color for eyebrows and highlights, 6-digit hex. Should differ from primary." },
+        background: { type: "string", description: "Page background, 6-digit hex." },
         surface: { type: "string", description: "Card surface color, 6-digit hex." },
         text: { type: "string", description: "Body text color, 6-digit hex. Must be readable on background." },
         textMuted: { type: "string", description: "Secondary text color, 6-digit hex." },
@@ -68,8 +54,8 @@ const SCHEMA = {
       additionalProperties: false,
       required: ["headingFont", "bodyFont", "rationale"],
       properties: {
-        headingFont: { type: "string", description: "Heading typeface. Prefer one the site already uses; otherwise a Google Font." },
-        bodyFont: { type: "string", description: "Body typeface, available on Google Fonts." },
+        headingFont: { type: "string", description: "Heading typeface. MUST be a real Google Fonts family name." },
+        bodyFont: { type: "string", description: "Body typeface. MUST be a real Google Fonts family name." },
         rationale: { type: "string", description: "One sentence on why this pairing suits the brand." },
       },
     },
@@ -82,27 +68,17 @@ const SCHEMA = {
         ctaLabel: { type: "string", description: "Nav button label, 2-3 words." },
       },
     },
-    blocks: {
+    outline: {
       type: "array",
       description:
-        "6-8 blocks in the order they appear. The first must be a hero and the last should be a contact or cta block.",
+        "The sections this specific homepage needs, in order, invented for this brand. 6-10 entries. Do not default to a generic template.",
       items: {
         type: "object",
         additionalProperties: false,
-        required: [
-          "blockType", "variant", "purpose", "eyebrow",
-          "headline", "body", "primaryCta", "secondaryCta", "items",
-        ],
+        required: ["title", "intent"],
         properties: {
-          blockType: { type: "string", enum: [...BLOCK_TYPES], description: "Which approved block to use." },
-          variant: { type: "string", enum: [...VARIANTS], description: "Layout variant. Must be one the block supports." },
-          purpose: { type: "string", description: "One sentence on the job this block does for THIS brand." },
-          eyebrow: { type: "string", description: "Short kicker above the heading, 1-4 words. Empty string if not needed." },
-          headline: { type: "string", description: "Section heading, ready to use." },
-          body: { type: "string", description: "1-2 sentences of supporting copy. Empty string if the block needs none." },
-          primaryCta: { type: "string", description: "Filled button label. Empty string if the block has no button." },
-          secondaryCta: { type: "string", description: "Outline button label. Empty string if not needed." },
-          items: { type: "array", description: "The block's repeated elements. Empty array if the block takes none.", items: ITEM_SCHEMA },
+          title: { type: "string", description: "Short name for the section." },
+          intent: { type: "string", description: "One sentence: the job it does and roughly how it should look." },
         },
       },
     },
@@ -123,29 +99,70 @@ const SCHEMA = {
   },
 } as const;
 
-const SYSTEM_PROMPT = `You are a senior brand and conversion designer at Digitalfeet.
+const IDENTITY_SYSTEM = `You are a senior brand and conversion designer.
 
-You are given either (a) branding signals scraped from a client's existing website, or (b) a short brief from a client who has no website yet. From that, you assemble a homepage using ONLY the approved Digitalfeet block library below. Each block is an existing, signed-off template — you choose which blocks to use, in what order, with which variant, and you write the copy that fills them.
+You are given either (a) branding signals scraped from a client's existing website, or (b) a short brief from a client who has no website yet. Decide the brand identity and the shape of their homepage.
 
-APPROVED BLOCK LIBRARY
-${blockCatalogueForPrompt()}
+You are NOT working from a template. Invent the section list this particular brand needs — a restaurant, a law firm and a SaaS product should produce visibly different pages. Skip sections that don't earn their place, and add unusual ones where the business calls for them.
 
-Composition rules:
-- Use 6-8 blocks. The first block must be "hero". The last should be "contact" or "cta".
-- Never repeat a block type, with one exception: "content" may appear at most twice, and if it does, alternate split-left and split-right.
-- Only use a variant listed for that block type.
-- Choose blocks that fit the brand's actual business. A service agency needs steps and testimonials; a SaaS product needs pricing and features; a firm with no public pricing should not get a pricing block.
-- Respect each block's item count and item shape exactly. Fields a block doesn't use must be an empty string or empty array — never filler text, never "N/A".
+Rules:
+- Ground every choice in the evidence. When a site was scraped, reuse its own colors and typefaces where they work.
+- A scraped color list is ranked by prominence but noisy: it includes framework defaults and greys. Pick the hexes that read as genuine brand colors.
+- With no existing site, design the identity from scratch to suit the stated industry, audience and style. If the client named a colour, build around it.
+- "accent" is for small highlights and should differ from "primary", which carries buttons.
+- Strong contrast between "text" and "background". Never light-on-light or dark-on-dark.
+- All colors: 6-digit lowercase hex with a leading #.
+- Both typefaces must be real Google Fonts families.
+- Write in the brand's own language. If the site is not in English, work in the site's language.
+- Be concrete. No "Lorem ipsum", no "Your Company".`;
 
-Branding rules:
-- Ground every choice in the evidence provided. When a site was scraped, reuse its own colors and typefaces where they work.
-- A scraped color list is ranked by prominence but is noisy: it includes framework defaults and greys. Pick the hexes that read as genuine brand colors, and only invent a hex when the evidence gives you nothing usable.
-- When there is no existing website, design the identity from scratch: choose a palette and type pairing that suit the stated industry, audience and style preference. If the client named a colour they want, build the palette around it.
-- "accent" is used for small eyebrow labels and highlights, so it should differ from "primary", which is used for buttons.
-- Ensure strong contrast between "text" and "background". Never return a light-on-light or dark-on-dark pair.
-- All colors must be 6-digit hex, lowercase, with a leading #.
-- Write copy in the brand's own voice and language. If the site is not in English, write the copy in the site's language.
-- Be concrete. No filler like "Lorem ipsum", "Your Company", or "Welcome to our website".`;
+function pageSystemPrompt(id: Identity): string {
+  const { palette, typography, brand, nav } = id;
+
+  return `You are a senior web designer and front-end developer. Write the complete homepage for "${brand.name}" as a single self-contained HTML document.
+
+BRAND
+- Name: ${brand.name}
+- Industry: ${brand.industry}
+- Voice: ${brand.voice}
+- About: ${brand.summary}
+
+PALETTE (use exactly these, as CSS custom properties)
+--primary: ${palette.primary}
+--primary-dark: ${palette.primaryDark}
+--accent: ${palette.accent}
+--bg: ${palette.background}
+--surface: ${palette.surface}
+--text: ${palette.text}
+--text-muted: ${palette.textMuted}
+
+TYPE
+- Headings: "${typography.headingFont}"
+- Body: "${typography.bodyFont}"
+- Load both from Google Fonts with a <link> in the head.
+
+NAVIGATION: ${nav.items.join(", ")} — with a "${nav.ctaLabel}" button.
+
+TECHNICAL REQUIREMENTS
+- Output ONE complete document: <!doctype html> through </html>. Nothing before or after it.
+- All CSS inside a single <style> block in the head. No external stylesheets except the Google Fonts link.
+- ZERO JavaScript. No <script> tags. The page renders in a sandbox where scripts never run, so anything requiring JS will simply appear broken.
+- No external images — every remote URL will fail. Create all imagery with CSS gradients, geometric shapes, or inline SVG you write yourself.
+- Fully responsive. Use CSS grid and flexbox, clamp() for type, and at least one media query for narrow screens.
+- Semantic HTML: header, nav, main, section, footer, real heading hierarchy.
+- Accessible: sufficient contrast, alt text or aria-hidden on decorative SVG, visible focus styles.
+
+DESIGN DIRECTION
+- Design this page for THIS brand. Do not reach for a default SaaS layout unless the business is a SaaS product.
+- Vary section rhythm: alternate full-bleed colour bands, contained sections, split layouts and grids. Avoid six identical centred sections stacked in a row.
+- Real, specific copy throughout — names, numbers, plausible detail. Never "Lorem ipsum", never "Feature One".
+- Consider using inline SVG for icons and illustrative shapes; it is the only way to get real imagery here.
+
+SECTIONS TO BUILD (in order)
+${id.outline.map((s, i) => `${i + 1}. ${s.title} — ${s.intent}`).join("\n")}
+
+Return only the HTML document.`;
+}
 
 export type BrandSource =
   | { kind: "url"; brand: ScrapedBrand }
@@ -212,14 +229,13 @@ function tooSimilar(a: string, b: string): boolean {
   const x = toHsl(a);
   const y = toHsl(b);
 
-  // Both effectively neutral: only a clear lightness shift counts as different.
   if (x.s < 0.15 && y.s < 0.15) return Math.abs(x.l - y.l) < 0.25;
 
   const hueGap = Math.min(Math.abs(x.h - y.h), 360 - Math.abs(x.h - y.h));
   return hueGap < 40;
 }
 
-/** Guard against a malformed hex slipping into inline styles. */
+/** Guard against a malformed hex reaching the generated stylesheet. */
 function sanitizePalette(p: Palette): Palette {
   const fallback: Record<string, string> = {
     primary: "#4826ad",
@@ -244,72 +260,34 @@ function sanitizePalette(p: Palette): Palette {
   return out;
 }
 
-/** Models routinely put the step numeral in `title`; move it where it belongs. */
-function normalizeItem(type: BlockType, item: BlockItem): BlockItem {
-  const out = { ...item };
-
-  if (type === "steps" && /^\s*#?\d{1,2}[.)]?\s*$/.test(out.title)) {
-    if (!out.value.trim()) out.value = out.title.replace(/[^\d]/g, "").padStart(2, "0");
-    // The numeral was standing in for the step name, so there is no name left.
-    out.title = "";
-  }
-
-  if (type === "testimonials") {
-    // The template draws its own quote marks around the quote.
-    out.description = out.description.trim().replace(/^["“”'']+|["“”'']+$/g, "");
-  }
-
-  return out;
+/**
+ * The page renders in a script-free sandbox, but strip script and event
+ * handlers anyway — defence in depth, and it stops a stray <script> from
+ * silently swallowing the markup after it.
+ */
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<script\b[^>]*\/?>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
+    .replace(/javascript:/gi, "#");
 }
 
-/**
- * Keep the composition inside the rules the prompt states, so a stray model
- * choice can't produce a block the renderer has no template for.
- */
-function sanitizeBlocks(blocks: Block[]): Block[] {
-  const seen = new Map<BlockType, number>();
+/** Models often wrap the document in a markdown fence despite instructions. */
+function unfence(raw: string): string {
+  let text = raw.trim();
 
-  const cleaned = (blocks ?? [])
-    .filter((b) => b && BLOCK_TYPES.includes(b.blockType))
-    .filter((b) => {
-      // "content" may repeat once; everything else is unique.
-      const count = seen.get(b.blockType) ?? 0;
-      const limit = b.blockType === "content" ? 2 : 1;
-      if (count >= limit) return false;
-      seen.set(b.blockType, count + 1);
-      return true;
-    })
-    .map((b) => {
-      const spec = BLOCK_LIBRARY[b.blockType];
-      const [, max] = spec.itemRange;
-      return {
-        ...b,
-        variant: resolveVariant(b.blockType, b.variant),
-        items: (b.items ?? [])
-          .slice(0, max)
-          .map((item) => normalizeItem(b.blockType, {
-            title: item?.title ?? "",
-            description: item?.description ?? "",
-            meta: item?.meta ?? "",
-            value: item?.value ?? "",
-            bullets: Array.isArray(item?.bullets) ? item.bullets.slice(0, 6) : [],
-          })),
-      };
-    })
-    .slice(0, 8);
+  const fence = text.match(/^```(?:html)?\s*\n([\s\S]*?)\n?```$/i);
+  if (fence) text = fence[1].trim();
 
-  // Alternate the two content splits if the model returned the same side twice.
-  const contentIdx = cleaned
-    .map((b, i) => (b.blockType === "content" ? i : -1))
-    .filter((i) => i >= 0);
-  if (contentIdx.length === 2) {
-    const [a, c] = contentIdx;
-    if (cleaned[a].variant === cleaned[c].variant && cleaned[a].variant !== "accent") {
-      cleaned[c] = { ...cleaned[c], variant: cleaned[a].variant === "split-left" ? "split-right" : "split-left" };
-    }
-  }
+  const start = text.search(/<!doctype html|<html\b/i);
+  if (start > 0) text = text.slice(start);
 
-  return cleaned;
+  const end = text.toLowerCase().lastIndexOf("</html>");
+  if (end !== -1) text = text.slice(0, end + 7);
+
+  return text.trim();
 }
 
 export type GenerateOptions = {
@@ -318,11 +296,7 @@ export type GenerateOptions = {
   avoidPrimary?: string;
 };
 
-export async function generateHomepage(
-  source: BrandSource,
-  options: GenerateOptions = {},
-): Promise<Recommendation> {
-  const { refinement, avoidPrimary } = options;
+function client() {
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey || apiKey.startsWith("sk-your") || apiKey === "REPLACE_ME") {
@@ -331,37 +305,49 @@ export async function generateHomepage(
     );
   }
 
-  const client = new OpenAI({ apiKey, timeout: 120_000, maxRetries: 2 });
-  const model = process.env.OPENAI_MODEL || "gpt-4o";
+  return new OpenAI({ apiKey, timeout: 180_000, maxRetries: 2 });
+}
 
+function friendlyError(err: unknown, model: string): Error {
+  const e = err as { status?: number; message?: string };
+  if (e.status === 401) return new Error("OpenAI rejected the API key. Check OPENAI_API_KEY in .env.");
+  if (e.status === 429) return new Error("OpenAI rate limit or quota reached. Check your plan and billing.");
+  if (e.status === 404) {
+    return new Error(`The model "${model}" isn't available to this key. Set OPENAI_MODEL in .env to one you have access to.`);
+  }
+  return new Error(e.message || "The OpenAI request failed.");
+}
+
+export async function generateHomepage(
+  source: BrandSource,
+  options: GenerateOptions = {},
+): Promise<Recommendation> {
+  const { refinement, avoidPrimary } = options;
+  const openai = client();
+  const model = process.env.OPENAI_MODEL || "gpt-4o";
   const basePrompt = buildUserPrompt(source);
 
-  async function requestOnce(extra?: string): Promise<Recommendation> {
+  /* ---------------- Pass 1: identity + outline ---------------- */
+
+  async function identityOnce(extra?: string): Promise<Identity> {
     const userPrompt = [basePrompt, refinement, extra].filter(Boolean).join("\n\n");
 
     let completion;
     try {
-      completion = await client.chat.completions.create({
+      completion = await openai.chat.completions.create({
         model,
-        // A refinement should visibly differ from what they just rejected.
-        temperature: refinement ? 0.9 : 0.7,
+        temperature: refinement ? 0.9 : 0.8,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: IDENTITY_SYSTEM },
           { role: "user", content: userPrompt },
         ],
         response_format: {
           type: "json_schema",
-          json_schema: { name: "homepage_recommendation", strict: true, schema: SCHEMA },
+          json_schema: { name: "brand_identity", strict: true, schema: IDENTITY_SCHEMA },
         },
       });
     } catch (err) {
-      const e = err as { status?: number; message?: string };
-      if (e.status === 401) throw new Error("OpenAI rejected the API key. Check OPENAI_API_KEY in .env.");
-      if (e.status === 429) throw new Error("OpenAI rate limit or quota reached. Check your plan and billing.");
-      if (e.status === 404) {
-        throw new Error(`The model "${model}" isn't available to this key. Set OPENAI_MODEL in .env to one you have access to.`);
-      }
-      throw new Error(e.message || "The OpenAI request failed.");
+      throw friendlyError(err, model);
     }
 
     const choice = completion.choices[0];
@@ -372,42 +358,80 @@ export async function generateHomepage(
     const raw = choice?.message?.content;
     if (!raw) throw new Error("OpenAI returned an empty response. Try again.");
 
-    let parsed: Recommendation;
+    let parsed: Identity;
     try {
-      parsed = JSON.parse(raw) as Recommendation;
+      parsed = JSON.parse(raw) as Identity;
     } catch {
       throw new Error("Couldn't parse the model response. Try again.");
     }
 
     parsed.palette = sanitizePalette(parsed.palette);
-    parsed.blocks = sanitizeBlocks(parsed.blocks);
     parsed.nav = {
       items: (parsed.nav?.items ?? []).slice(0, 5),
       ctaLabel: parsed.nav?.ctaLabel || "Get in touch",
     };
+    parsed.outline = (parsed.outline ?? []).slice(0, 10);
     parsed.improvements = parsed.improvements ?? [];
 
-    if (parsed.blocks.length === 0) {
-      throw new Error("The model returned no usable blocks. Try again.");
+    if (parsed.outline.length === 0) {
+      throw new Error("The model returned no page outline. Try again.");
     }
 
     return parsed;
   }
 
-  const first = await requestOnce();
+  let identity = await identityOnce();
 
-  // The model tends to nudge the shade rather than change hue. If the client
-  // asked for different colours and got the same family back, insist once.
-  if (avoidPrimary && tooSimilar(first.palette.primary, avoidPrimary)) {
+  if (avoidPrimary && tooSimilar(identity.palette.primary, avoidPrimary)) {
     try {
-      const retry = await requestOnce(
+      const retry = await identityOnce(
         `The palette you would normally choose is too close to ${avoidPrimary.toLowerCase()}. Pick a primary from a clearly DIFFERENT colour family — its hue must be at least 60 degrees away on the colour wheel. Do not simply darken or lighten the previous colour.`,
       );
-      if (!tooSimilar(retry.palette.primary, avoidPrimary)) return retry;
+      if (!tooSimilar(retry.palette.primary, avoidPrimary)) identity = retry;
     } catch {
-      // A failed retry shouldn't cost the user the result we already have.
+      // Keep the identity we already have rather than failing the request.
     }
   }
 
-  return first;
+  /* ---------------- Pass 2: the page itself ---------------- */
+
+  let pageCompletion;
+  try {
+    pageCompletion = await openai.chat.completions.create({
+      model,
+      temperature: 0.8,
+      max_completion_tokens: 12_000,
+      messages: [
+        { role: "system", content: pageSystemPrompt(identity) },
+        {
+          role: "user",
+          content: [
+            `Write the homepage for ${identity.brand.name}.`,
+            refinement ? `\n${refinement}` : "",
+            "\nSource material for accurate detail:",
+            basePrompt.slice(0, 3000),
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        },
+      ],
+    });
+  } catch (err) {
+    throw friendlyError(err, model);
+  }
+
+  const pageChoice = pageCompletion.choices[0];
+  if (pageChoice?.message?.refusal) {
+    throw new Error(`OpenAI declined to write the page: ${pageChoice.message.refusal}`);
+  }
+
+  const html = sanitizeHtml(unfence(pageChoice?.message?.content ?? ""));
+
+  if (!/<\/html>/i.test(html) || html.length < 500) {
+    throw new Error(
+      "The generated page came back incomplete. Press Try again — it usually works on a second run.",
+    );
+  }
+
+  return { ...identity, html };
 }

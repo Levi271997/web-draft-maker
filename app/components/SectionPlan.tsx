@@ -1,5 +1,4 @@
 import type { GenerateMode, Recommendation } from "@/lib/types";
-import { BLOCK_LIBRARY } from "@/lib/blocks";
 
 export default function SectionPlan({
   mode,
@@ -8,50 +7,38 @@ export default function SectionPlan({
   mode: GenerateMode;
   recommendation: Recommendation;
 }) {
-  const { blocks, seo, improvements } = recommendation;
+  const { outline, seo, improvements } = recommendation;
 
   return (
     <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 sm:p-8">
       <p className="mb-1 font-heading text-xs font-medium tracking-wide text-brand uppercase">
-        Step 3 · The build sheet
+        Step 3 · The reasoning
       </p>
       <h2 className="font-heading text-h3-m font-bold text-ink sm:text-h4">
-        Blocks to assemble
+        Why this page is built this way
       </h2>
       <p className="mt-1 max-w-prose text-sm text-ink-soft">
-        Each row is an approved Digitalfeet block, in page order — ready to drop
-        into Elementor.
+        The sections were chosen for this business specifically — not picked
+        from a fixed template.
       </p>
 
       <ol className="mt-5 flex flex-col gap-4">
-        {blocks.map((block, index) => {
-          const spec = BLOCK_LIBRARY[block.blockType];
-          return (
-            <li
-              key={`${block.blockType}-${index}`}
-              className="flex gap-4 border-b border-gray-100 pb-4 last:border-0 last:pb-0"
-            >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-brand/10 font-heading text-xs font-bold text-brand">
-                {index + 1}
-              </span>
-              <div className="min-w-0">
-                <h3 className="flex flex-wrap items-center gap-2 font-heading text-base font-bold text-ink">
-                  {spec?.label ?? block.blockType}
-                  <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] font-normal text-ink-soft">
-                    {block.variant}
-                  </span>
-                </h3>
-                <p className="mt-0.5 text-sm text-ink-soft">{block.purpose}</p>
-                {block.items.length > 0 && (
-                  <p className="mt-1 text-xs text-gray-400">
-                    {block.items.length}{" "}
-                    {block.items.length === 1 ? "element" : "elements"}
-                  </p>
-                )}
-              </div>
-            </li>
-          );
-        })}
+        {outline.map((section, index) => (
+          <li
+            key={`${section.title}-${index}`}
+            className="flex gap-4 border-b border-gray-100 pb-4 last:border-0 last:pb-0"
+          >
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-brand/10 font-heading text-xs font-bold text-brand">
+              {index + 1}
+            </span>
+            <div className="min-w-0">
+              <h3 className="font-heading text-base font-bold text-ink">
+                {section.title}
+              </h3>
+              <p className="mt-0.5 text-sm text-ink-soft">{section.intent}</p>
+            </div>
+          </li>
+        ))}
       </ol>
 
       {improvements.length > 0 && (

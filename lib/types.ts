@@ -1,5 +1,3 @@
-import type { BlockType, Variant } from "./blocks";
-
 export type Palette = {
   primary: string;
   primaryDark: string;
@@ -11,28 +9,13 @@ export type Palette = {
   rationale: string;
 };
 
-/** One element inside a block. Which fields matter depends on the block type. */
-export type BlockItem = {
+/** A section the model decided the page needs. Free-form — not a template. */
+export type OutlineEntry = {
   title: string;
-  description: string;
-  meta: string;
-  value: string;
-  bullets: string[];
+  intent: string;
 };
 
-export type Block = {
-  blockType: BlockType;
-  variant: Variant;
-  purpose: string;
-  eyebrow: string;
-  headline: string;
-  body: string;
-  primaryCta: string;
-  secondaryCta: string;
-  items: BlockItem[];
-};
-
-export type Recommendation = {
+export type Identity = {
   brand: {
     name: string;
     industry: string;
@@ -49,12 +32,18 @@ export type Recommendation = {
     items: string[];
     ctaLabel: string;
   };
-  blocks: Block[];
+  outline: OutlineEntry[];
   seo: {
     title: string;
     metaDescription: string;
   };
   improvements: string[];
+};
+
+/** The identity plus the page the model wrote from it. */
+export type Recommendation = Identity & {
+  /** A complete, self-contained HTML document. Rendered sandboxed. */
+  html: string;
 };
 
 /** Which path the user took. */

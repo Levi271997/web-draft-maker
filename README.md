@@ -8,9 +8,9 @@ Two ways in, one output:
 - **I don't have one yet** — a four-step guided flow written for someone who
   has never had a website and doesn't know web vocabulary.
 
-Either way, OpenAI composes the page from the approved block library and the
-result renders the same. Under every preview sit plain-language refine buttons
-and a booking CTA.
+Either way, OpenAI designs the page freely — no template, no block library — and
+writes it as real HTML and CSS. Under every preview sit plain-language refine
+buttons and a booking CTA.
 
 ## The guided flow
 
@@ -23,9 +23,9 @@ Designed so nothing asks the client to describe their own brand:
    we scrape what we can and silently skip it if it's private.
 3. **What should the website do?** — multi-select outcomes (get calls, take
    bookings, sell online, show my work, explain services, be found on Google).
-   This is the highest-value question: each goal maps to blocks in
-   [lib/brief.ts](lib/brief.ts), so goals *drive page structure* instead of the
-   model guessing at it.
+   This is the highest-value question: each goal carries a stated demand in
+   [lib/brief.ts](lib/brief.ts) ("the phone number must be impossible to miss…"),
+   so goals *drive page structure* instead of the model guessing at it.
 4. **Which of these feels like you?** — four small rendered mockups rather than
    adjectives, plus colour swatches rather than a hex field.
 
@@ -78,43 +78,43 @@ npm run build   # production build
      links, with generic/system stacks filtered out.
    - Logo, `<title>`, meta description, nav labels, headings, CTA labels, and
      visible prose.
-2. **Generate** — [lib/generate.ts](lib/generate.ts) sends those signals to
-   OpenAI with a **strict JSON schema**. The model does not invent sections: it
-   composes the page from the approved block library in
-   [lib/blocks.ts](lib/blocks.ts), choosing which blocks to use, in what order,
-   with which variant, and writing the copy that fills them.
-3. **Render** — the result is shown in three parts: what was detected, a live
-   homepage preview assembled from the real blocks in the *recommended* palette,
-   and a build sheet listing each block and variant in page order.
+2. **Generate** — [lib/generate.ts](lib/generate.ts) runs two passes:
+   - **Identity** (strict JSON): brand, palette, type pairing, nav, SEO, and a
+     page **outline invented for this brand**. A restaurant, a law firm and a
+     SaaS product produce visibly different section lists.
+   - **Page** (free-form): the model writes a complete HTML document from that
+     identity — its own layout, its own sections, its own CSS.
 
-## Block library
+   Splitting the passes keeps the metadata reliably parseable while letting the
+   page pass spend its whole budget on markup instead of JSON escaping.
+3. **Render** — what was detected, the generated page in a sandboxed frame with
+   a desktop/mobile toggle and Copy HTML, and the reasoning behind the sections.
 
-Ported from the signed-off Elementor template set, so a generated page is always
-something the team already builds. Blocks carry structure only — colour and type
-come from the analysed brand.
+## Free-form generation
 
-| Block | Variants |
-| --- | --- |
-| Hero | centered, split-left, split-right |
-| Logo strip | centered, minimal |
-| Feature grid | grid-3, grid-2, cards, centered |
-| Content split | split-left, split-right, accent |
-| Stats band | centered, accent, split-left |
-| Numbered steps | grid-3, cards, minimal |
-| Testimonials | cards, grid-2, centered |
-| Pricing plans | cards, centered |
-| FAQ | centered, grid-2, split-left |
-| Team | grid-3, cards |
-| Insights | cards, grid-3, minimal |
-| Contact | split-left, split-right, centered |
-| Closing CTA | centered, accent, split-right |
+There is no block library and no template. The model is told what the brand is
+and what the page must achieve, then designs it.
 
-Composition is enforced server-side, not just requested in the prompt: 6–8
-blocks, hero first, contact/CTA last, no repeated block type (except a second
-`content` split, which is flipped to the opposite side), and variants clamped to
-ones the block actually supports. Item shapes are normalised too — a step
-numeral that arrives in the wrong field is moved, and testimonial quotes are
-unwrapped so the template's own quote marks aren't doubled.
+Constraints given to the page pass are technical, not stylistic:
+
+- One complete document; all CSS in a single `<style>`; Google Fonts by `<link>`
+- **Zero JavaScript** — it renders in a script-free sandbox, so JS would break
+- **No external images** — every remote URL would 404, so imagery is CSS
+  gradients, geometric shapes and inline SVG the model writes itself
+- Responsive with grid/flex, `clamp()` and media queries; semantic HTML
+
+### Rendering safely
+
+The page is model-written HTML, so it renders in an `<iframe sandbox="">` —
+every restriction on: no scripts, no forms, no same-origin access. Nothing the
+model writes can reach this app. As defence in depth the server also strips
+`<script>` tags, `on*` handlers and `javascript:` URLs before the HTML is
+returned, and rejects a response that isn't a complete document.
+
+> Trade-off worth knowing: output is no longer guaranteed to map onto the
+> approved Elementor blocks, so a generated page may not be buildable from the
+> existing library. The block-constrained version is in git history at `d573c99`
+> if that guarantee matters more than the freedom.
 
 The model is told to write in the site's own language, so non-English sites get
 non-English copy.

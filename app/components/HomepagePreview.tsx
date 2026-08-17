@@ -1,144 +1,117 @@
+"use client";
+
+import { useState } from "react";
 import type { Recommendation } from "@/lib/types";
-import { BLOCK_LIBRARY } from "@/lib/blocks";
-import BlockRenderer from "./blocks/BlockRenderer";
 
 /**
- * Assembles the recommendation into a homepage using the approved Digitalfeet
- * blocks, drawn in the palette and type pairing the model returned.
+ * The generated page is a complete HTML document written by the model, so it
+ * renders in an iframe rather than as React components.
+ *
+ * `sandbox=""` applies every restriction: no scripts, no forms, no same-origin
+ * access. The page is generated CSS-only, so nothing is lost, and nothing the
+ * model wrote can touch this app.
  */
+
+const DEVICES = [
+  { id: "desktop", label: "Desktop", width: "100%" },
+  { id: "mobile", label: "Mobile", width: "390px" },
+] as const;
+
+type DeviceId = (typeof DEVICES)[number]["id"];
+
 export default function HomepagePreview({
   recommendation,
 }: {
   recommendation: Recommendation;
 }) {
-  const { palette, typography, nav, blocks, brand } = recommendation;
+  const [device, setDevice] = useState<DeviceId>("desktop");
+  const [copied, setCopied] = useState(false);
 
-  const fonts = {
-    heading: `"${typography.headingFont}", "Ubuntu", Georgia, serif`,
-    body: `"${typography.bodyFont}", "Inter", system-ui, sans-serif`,
-  };
+  const active = DEVICES.find((d) => d.id === device)!;
+
+  async function copyHtml() {
+    try {
+      await navigator.clipboard.writeText(recommendation.html);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
 
   return (
     <section>
-      <div className="mb-4">
-        <p className="mb-1 font-heading text-xs font-medium tracking-wide text-brand uppercase">
-          Step 2 · Your generated homepage
-        </p>
-        <h2 className="font-heading text-h3-m font-bold text-ink sm:text-h4">
-          Live preview
-        </h2>
-        <p className="mt-1 max-w-prose text-sm text-ink-soft">
-          Assembled from {blocks.length} approved Digitalfeet blocks, in your
-          recommended palette and type pairing. Fonts fall back to system faces
-          unless installed locally.
-        </p>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="mb-1 font-heading text-xs font-medium tracking-wide text-brand uppercase">
+            Step 2 · Your generated homepage
+          </p>
+          <h2 className="font-heading text-h3-m font-bold text-ink sm:text-h4">
+            Live preview
+          </h2>
+          <p className="mt-1 max-w-prose text-sm text-ink-soft">
+            A real, self-contained page written for this brand — not assembled
+            from a template.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="flex gap-0.5 rounded-lg bg-gray-100 p-0.5">
+            {DEVICES.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => setDevice(d.id)}
+                aria-pressed={device === d.id}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                  device === d.id
+                    ? "bg-white text-brand shadow-sm"
+                    : "text-ink-soft hover:text-ink"
+                }`}
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={copyHtml}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:border-brand hover:text-brand"
+          >
+            {copied ? "Copied ✓" : "Copy HTML"}
+          </button>
+        </div>
       </div>
 
-      <div
-        className="overflow-hidden rounded-2xl shadow-sm ring-1 ring-gray-200"
-        style={{ backgroundColor: palette.background, fontFamily: fonts.body }}
-      >
+      <div className="overflow-hidden rounded-2xl bg-gray-100 shadow-sm ring-1 ring-gray-200">
         {/* Browser chrome */}
         <div className="flex items-center gap-1.5 border-b border-black/5 bg-gray-100 px-4 py-2.5">
           <span className="size-2.5 rounded-full bg-red-400" />
           <span className="size-2.5 rounded-full bg-amber-400" />
           <span className="size-2.5 rounded-full bg-emerald-500" />
-        </div>
-
-        {/* Site nav */}
-        <div
-          className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4 sm:px-10"
-          style={{
-            backgroundColor: palette.surface,
-            borderColor: `${palette.textMuted}1f`,
-          }}
-        >
-          <span
-            className="font-bold"
-            style={{ fontFamily: fonts.heading, color: palette.primary }}
-          >
-            {brand.name}
+          <span className="ml-3 truncate text-[11px] text-gray-400">
+            {recommendation.brand.name.toLowerCase().replace(/[^a-z0-9]+/g, "")}.com
           </span>
-          <nav className="flex flex-wrap items-center gap-5">
-            {nav.items.map((item) => (
-              <span
-                key={item}
-                className="text-xs font-medium"
-                style={{ color: palette.textMuted }}
-              >
-                {item}
-              </span>
-            ))}
-            <span
-              className="rounded-lg border px-3 py-1.5 text-xs font-semibold"
-              style={{ borderColor: palette.primary, color: palette.primary }}
-            >
-              {nav.ctaLabel}
-            </span>
-          </nav>
         </div>
 
-        {/* Blocks */}
-        {blocks.map((block, index) => (
-          <div
-            key={`${block.blockType}-${index}`}
-            style={
-              // Alternate the ground so adjacent light blocks stay separated.
-              index % 2 === 1 && block.variant !== "accent"
-                ? { backgroundColor: palette.surface }
-                : undefined
-            }
-          >
-            <BlockRenderer block={block} palette={palette} fonts={fonts} />
-          </div>
-        ))}
-
-        {/* Footer */}
-        <div
-          className="px-6 py-10 sm:px-10"
-          style={{ backgroundColor: palette.primaryDark }}
-        >
-          <div className="flex flex-wrap items-start justify-between gap-6">
-            <div>
-              <p
-                className="text-lg font-bold"
-                style={{ fontFamily: fonts.heading, color: palette.surface }}
-              >
-                {brand.name}
-              </p>
-              <p className="mt-1 max-w-xs text-xs" style={{ color: `${palette.surface}b3` }}>
-                {brand.summary.split(".")[0]}.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-6">
-              {nav.items.map((item) => (
-                <span key={item} className="text-xs" style={{ color: `${palette.surface}cc` }}>
-                  {item}
-                </span>
-              ))}
-            </div>
-          </div>
-          <p
-            className="mt-8 border-t pt-4 text-[11px]"
-            style={{ borderColor: `${palette.surface}26`, color: `${palette.surface}99` }}
-          >
-            © {brand.name} · All Rights Reserved
-          </p>
+        <div className="flex justify-center bg-gray-200/60 p-0 sm:p-4">
+          <iframe
+            key={`${device}-${recommendation.html.length}`}
+            title={`${recommendation.brand.name} homepage preview`}
+            srcDoc={recommendation.html}
+            sandbox=""
+            loading="lazy"
+            className="h-180 border-0 bg-white transition-all sm:rounded-lg sm:shadow-lg"
+            style={{ width: active.width, maxWidth: "100%" }}
+          />
         </div>
       </div>
 
-      {/* Block manifest */}
-      <ul className="mt-4 flex flex-wrap gap-2">
-        {blocks.map((block, index) => (
-          <li
-            key={`${block.blockType}-tag-${index}`}
-            className="rounded-full bg-gray-100 px-3 py-1 text-xs text-ink-soft"
-          >
-            {index + 1}. {BLOCK_LIBRARY[block.blockType]?.label ?? block.blockType}
-            <span className="text-gray-400"> · {block.variant}</span>
-          </li>
-        ))}
-      </ul>
+      <p className="mt-3 text-xs text-ink-soft">
+        Scroll inside the frame to see the whole page. Imagery is drawn with CSS
+        and SVG, so a real build would swap in your own photography.
+      </p>
     </section>
   );
 }

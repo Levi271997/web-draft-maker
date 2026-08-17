@@ -122,8 +122,8 @@ export type Goal = {
   id: string;
   label: string;
   hint: string;
-  /** Blocks this outcome argues for. */
-  blocks: string[];
+  /** What the page must therefore do — stated as intent, not as a template. */
+  demands: string;
 };
 
 export const GOALS: Goal[] = [
@@ -131,37 +131,43 @@ export const GOALS: Goal[] = [
     id: "calls",
     label: "Get phone calls",
     hint: "People ring you to get started",
-    blocks: ["contact", "cta"],
+    demands:
+      "the phone number must be impossible to miss — in the header, repeated mid-page, and in a closing call to action",
   },
   {
     id: "bookings",
     label: "Take bookings",
     hint: "Appointments, tables or jobs booked in",
-    blocks: ["contact", "steps"],
+    demands:
+      "a prominent booking or enquiry form, plus a short explanation of what happens after they book",
   },
   {
     id: "sell",
     label: "Sell online",
     hint: "Products or packages bought on the site",
-    blocks: ["pricing", "features"],
+    demands:
+      "clearly priced products or packages with what each includes, and an obvious buying action",
   },
   {
     id: "showcase",
     label: "Show my work",
     hint: "Photos of past jobs, projects or results",
-    blocks: ["blogs", "content", "testimonials"],
+    demands:
+      "a strong visual gallery or case-study section carrying real weight on the page, backed by customer proof",
   },
   {
     id: "explain",
     label: "Explain my services",
     hint: "Make it clear what you do and for whom",
-    blocks: ["features", "content", "faq"],
+    demands:
+      "a clear breakdown of services and who each is for, written so a first-time visitor understands immediately",
   },
   {
     id: "google",
     label: "Be found on Google",
     hint: "Get discovered by people searching",
-    blocks: ["faq", "content"],
+    demands:
+      "substantial descriptive text, location and service keywords used naturally, and an answers/FAQ section",
   },
 ];
 
@@ -294,10 +300,6 @@ export function briefToPrompt(b: Brief, extraCopy?: string): string {
     .map((id) => GOALS.find((g) => g.id === id))
     .filter((g): g is Goal => Boolean(g));
 
-  // Goals are the strongest structural signal we have, so state them as block
-  // requirements rather than leaving the model to infer a page shape.
-  const requiredBlocks = [...new Set(goals.flatMap((g) => g.blocks))];
-
   return [
     "This brand has NO existing website. Design its first homepage from this brief.",
     "",
@@ -307,10 +309,8 @@ export function briefToPrompt(b: Brief, extraCopy?: string): string {
     "What they do, in their own words:",
     b.description,
     "",
-    "What they want the website to achieve:",
-    ...goals.map((g) => `- ${g.label} (${g.hint})`),
-    "",
-    `Because of those goals, strongly prefer including these blocks: ${requiredBlocks.join(", ")}. Drop any that genuinely do not fit the business.`,
+    "What they want the website to achieve — this drives the page structure:",
+    ...goals.map((g) => `- ${g.label}: so ${g.demands}.`),
     "",
     style ? `Look and feel they chose: ${style.label}. ${style.direction}` : "",
     color ? `Colour they leaned towards: ${color.label} (${color.hex}). Build the palette around it — you may adjust the exact shade for contrast.` : "",
