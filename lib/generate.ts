@@ -1,12 +1,37 @@
 import OpenAI from "openai";
 import type { ScrapedBrand } from "./scrape";
-import type { Palette, Recommendation } from "./types";
+import type { Block, BlockItem, Palette, Recommendation } from "./types";
+import {
+  BLOCK_LIBRARY,
+  BLOCK_TYPES,
+  VARIANTS,
+  blockCatalogueForPrompt,
+  resolveVariant,
+  type BlockType,
+} from "./blocks";
 
 /** Strict JSON schema — every property is required, per structured-output rules. */
+const ITEM_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "description", "meta", "value", "bullets"],
+  properties: {
+    title: { type: "string", description: "Primary label. Empty string if unused." },
+    description: { type: "string", description: "Supporting sentence. Empty string if unused." },
+    meta: { type: "string", description: "Secondary label (role, category, period). Empty if unused." },
+    value: { type: "string", description: "Figure, price, step number, rating or date. Empty if unused." },
+    bullets: {
+      type: "array",
+      description: "Only for pricing plans — what the plan includes. Otherwise an empty array.",
+      items: { type: "string" },
+    },
+  },
+} as const;
+
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["brand", "palette", "typography", "hero", "nav", "sections", "seo", "improvements"],
+  required: ["brand", "palette", "typography", "nav", "blocks", "seo", "improvements"],
   properties: {
     brand: {
       type: "object",
@@ -16,10 +41,7 @@ const SCHEMA = {
         name: { type: "string", description: "The brand or company name." },
         industry: { type: "string", description: "Short industry/category label." },
         voice: { type: "string", description: "3-6 word description of the brand tone of voice." },
-        summary: {
-          type: "string",
-          description: "Two sentences on what this brand does and who it serves.",
-        },
+        summary: { type: "string", description: "Two sentences on what this brand does and who it serves." },
       },
     },
     palette: {
@@ -32,10 +54,10 @@ const SCHEMA = {
       properties: {
         primary: { type: "string", description: "Primary brand color as a 6-digit hex, e.g. #4826ad" },
         primaryDark: { type: "string", description: "Darker primary for hover/dark surfaces, 6-digit hex." },
-        accent: { type: "string", description: "Accent/highlight color, 6-digit hex." },
+        accent: { type: "string", description: "Accent color used for eyebrows and highlights, 6-digit hex." },
         background: { type: "string", description: "Page background, 6-digit hex. Usually very light." },
         surface: { type: "string", description: "Card surface color, 6-digit hex." },
-        text: { type: "string", description: "Body text color, 6-digit hex. Must be dark enough to read on background." },
+        text: { type: "string", description: "Body text color, 6-digit hex. Must be readable on background." },
         textMuted: { type: "string", description: "Secondary text color, 6-digit hex." },
         rationale: { type: "string", description: "One or two sentences on why this palette fits the brand." },
       },
@@ -45,45 +67,41 @@ const SCHEMA = {
       additionalProperties: false,
       required: ["headingFont", "bodyFont", "rationale"],
       properties: {
-        headingFont: { type: "string", description: "Heading typeface name. Prefer one the site already uses; otherwise a Google Font." },
-        bodyFont: { type: "string", description: "Body typeface name, available on Google Fonts." },
+        headingFont: { type: "string", description: "Heading typeface. Prefer one the site already uses; otherwise a Google Font." },
+        bodyFont: { type: "string", description: "Body typeface, available on Google Fonts." },
         rationale: { type: "string", description: "One sentence on why this pairing suits the brand." },
       },
     },
-    hero: {
+    nav: {
       type: "object",
       additionalProperties: false,
-      required: ["eyebrow", "headline", "subheadline", "primaryCta", "secondaryCta"],
+      required: ["items", "ctaLabel"],
       properties: {
-        eyebrow: { type: "string", description: "Short kicker above the headline, 2-5 words." },
-        headline: { type: "string", description: "Benefit-led H1, under 12 words." },
-        subheadline: { type: "string", description: "One or two sentences supporting the headline." },
-        primaryCta: { type: "string", description: "Primary button label, 2-4 words." },
-        secondaryCta: { type: "string", description: "Secondary button label, 2-4 words." },
+        items: { type: "array", description: "4-5 top-level navigation labels.", items: { type: "string" } },
+        ctaLabel: { type: "string", description: "Nav button label, 2-3 words." },
       },
     },
-    nav: {
+    blocks: {
       type: "array",
-      description: "4-6 top-level navigation labels.",
-      items: { type: "string" },
-    },
-    sections: {
-      type: "array",
-      description: "5-7 homepage sections in the order they should appear, after the hero.",
+      description:
+        "6-8 blocks in the order they appear. The first must be a hero and the last should be a contact or cta block.",
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["title", "purpose", "headline", "body", "bullets"],
+        required: [
+          "blockType", "variant", "purpose", "eyebrow",
+          "headline", "body", "primaryCta", "secondaryCta", "items",
+        ],
         properties: {
-          title: { type: "string", description: "Section name, e.g. 'Social proof'." },
-          purpose: { type: "string", description: "One sentence on the job this section does." },
-          headline: { type: "string", description: "Ready-to-use section heading." },
-          body: { type: "string", description: "1-2 sentences of ready-to-use body copy." },
-          bullets: {
-            type: "array",
-            description: "2-4 short supporting points.",
-            items: { type: "string" },
-          },
+          blockType: { type: "string", enum: [...BLOCK_TYPES], description: "Which approved block to use." },
+          variant: { type: "string", enum: [...VARIANTS], description: "Layout variant. Must be one the block supports." },
+          purpose: { type: "string", description: "One sentence on the job this block does for THIS brand." },
+          eyebrow: { type: "string", description: "Short kicker above the heading, 1-4 words. Empty string if not needed." },
+          headline: { type: "string", description: "Section heading, ready to use." },
+          body: { type: "string", description: "1-2 sentences of supporting copy. Empty string if the block needs none." },
+          primaryCta: { type: "string", description: "Filled button label. Empty string if the block has no button." },
+          secondaryCta: { type: "string", description: "Outline button label. Empty string if not needed." },
+          items: { type: "array", description: "The block's repeated elements. Empty array if the block takes none.", items: ITEM_SCHEMA },
         },
       },
     },
@@ -106,12 +124,23 @@ const SCHEMA = {
 
 const SYSTEM_PROMPT = `You are a senior brand and conversion designer at Digitalfeet.
 
-You receive branding signals scraped from a real website: its palette, type stacks, headings, nav, and body copy. Your job is to propose a homepage that feels unmistakably like THAT brand — not a generic template.
+You receive branding signals scraped from a real website: its palette, type stacks, headings, nav, and body copy. You assemble a homepage for that brand using ONLY the approved Digitalfeet block library below. Each block is an existing, signed-off template — you choose which blocks to use, in what order, with which variant, and you write the copy that fills them.
 
-Rules:
+APPROVED BLOCK LIBRARY
+${blockCatalogueForPrompt()}
+
+Composition rules:
+- Use 6-8 blocks. The first block must be "hero". The last should be "contact" or "cta".
+- Never repeat a block type, with one exception: "content" may appear at most twice, and if it does, alternate split-left and split-right.
+- Only use a variant listed for that block type.
+- Choose blocks that fit the brand's actual business. A service agency needs steps and testimonials; a SaaS product needs pricing and features; a firm with no public pricing should not get a pricing block.
+- Respect each block's item count and item shape exactly. Fields a block doesn't use must be an empty string or empty array — never filler text, never "N/A".
+
+Branding rules:
 - Ground every choice in the evidence provided. Reuse the site's own colors and typefaces where they work.
 - The scraped color list is ranked by prominence but is noisy: it includes framework defaults and greys. Pick the hexes that read as genuine brand colors, and only invent a hex when the evidence gives you nothing usable.
-- Ensure the text color has strong contrast against the background color. Never return a light-on-light or dark-on-dark pair.
+- "accent" is used for small eyebrow labels and highlights, so it should differ from "primary", which is used for buttons.
+- Ensure strong contrast between "text" and "background". Never return a light-on-light or dark-on-dark pair.
 - All colors must be 6-digit hex, lowercase, with a leading #.
 - Write copy in the brand's own voice and language. If the site is not in English, write the copy in the site's language.
 - Be concrete. No filler like "Lorem ipsum", "Your Company", or "Welcome to our website".`;
@@ -164,6 +193,74 @@ function sanitizePalette(p: Palette): Palette {
   return out;
 }
 
+/** Models routinely put the step numeral in `title`; move it where it belongs. */
+function normalizeItem(type: BlockType, item: BlockItem): BlockItem {
+  const out = { ...item };
+
+  if (type === "steps" && /^\s*#?\d{1,2}[.)]?\s*$/.test(out.title)) {
+    if (!out.value.trim()) out.value = out.title.replace(/[^\d]/g, "").padStart(2, "0");
+    // The numeral was standing in for the step name, so there is no name left.
+    out.title = "";
+  }
+
+  if (type === "testimonials") {
+    // The template draws its own quote marks around the quote.
+    out.description = out.description.trim().replace(/^["“”'']+|["“”'']+$/g, "");
+  }
+
+  return out;
+}
+
+/**
+ * Keep the composition inside the rules the prompt states, so a stray model
+ * choice can't produce a block the renderer has no template for.
+ */
+function sanitizeBlocks(blocks: Block[]): Block[] {
+  const seen = new Map<BlockType, number>();
+
+  const cleaned = (blocks ?? [])
+    .filter((b) => b && BLOCK_TYPES.includes(b.blockType))
+    .filter((b) => {
+      // "content" may repeat once; everything else is unique.
+      const count = seen.get(b.blockType) ?? 0;
+      const limit = b.blockType === "content" ? 2 : 1;
+      if (count >= limit) return false;
+      seen.set(b.blockType, count + 1);
+      return true;
+    })
+    .map((b) => {
+      const spec = BLOCK_LIBRARY[b.blockType];
+      const [, max] = spec.itemRange;
+      return {
+        ...b,
+        variant: resolveVariant(b.blockType, b.variant),
+        items: (b.items ?? [])
+          .slice(0, max)
+          .map((item) => normalizeItem(b.blockType, {
+            title: item?.title ?? "",
+            description: item?.description ?? "",
+            meta: item?.meta ?? "",
+            value: item?.value ?? "",
+            bullets: Array.isArray(item?.bullets) ? item.bullets.slice(0, 6) : [],
+          })),
+      };
+    })
+    .slice(0, 8);
+
+  // Alternate the two content splits if the model returned the same side twice.
+  const contentIdx = cleaned
+    .map((b, i) => (b.blockType === "content" ? i : -1))
+    .filter((i) => i >= 0);
+  if (contentIdx.length === 2) {
+    const [a, c] = contentIdx;
+    if (cleaned[a].variant === cleaned[c].variant && cleaned[a].variant !== "accent") {
+      cleaned[c] = { ...cleaned[c], variant: cleaned[a].variant === "split-left" ? "split-right" : "split-left" };
+    }
+  }
+
+  return cleaned;
+}
+
 export async function generateHomepage(brand: ScrapedBrand): Promise<Recommendation> {
   const apiKey = process.env.OPENAI_API_KEY;
 
@@ -173,7 +270,7 @@ export async function generateHomepage(brand: ScrapedBrand): Promise<Recommendat
     );
   }
 
-  const client = new OpenAI({ apiKey, timeout: 90_000, maxRetries: 2 });
+  const client = new OpenAI({ apiKey, timeout: 120_000, maxRetries: 2 });
   const model = process.env.OPENAI_MODEL || "gpt-4o";
 
   let completion;
@@ -216,9 +313,16 @@ export async function generateHomepage(brand: ScrapedBrand): Promise<Recommendat
   }
 
   parsed.palette = sanitizePalette(parsed.palette);
-  parsed.nav = (parsed.nav ?? []).slice(0, 6);
-  parsed.sections = (parsed.sections ?? []).slice(0, 7);
+  parsed.blocks = sanitizeBlocks(parsed.blocks);
+  parsed.nav = {
+    items: (parsed.nav?.items ?? []).slice(0, 5),
+    ctaLabel: parsed.nav?.ctaLabel || "Get in touch",
+  };
   parsed.improvements = parsed.improvements ?? [];
+
+  if (parsed.blocks.length === 0) {
+    throw new Error("The model returned no usable blocks. Try again.");
+  }
 
   return parsed;
 }

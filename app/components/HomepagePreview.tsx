@@ -1,18 +1,22 @@
 import type { Recommendation } from "@/lib/types";
+import { BLOCK_LIBRARY } from "@/lib/blocks";
+import BlockRenderer from "./blocks/BlockRenderer";
 
 /**
- * Renders the recommendation as an actual homepage mock, using the palette and
- * type pairing the model returned rather than the Digitalfeet brand.
+ * Assembles the recommendation into a homepage using the approved Digitalfeet
+ * blocks, drawn in the palette and type pairing the model returned.
  */
 export default function HomepagePreview({
   recommendation,
 }: {
   recommendation: Recommendation;
 }) {
-  const { palette, typography, hero, nav, sections, brand } = recommendation;
+  const { palette, typography, nav, blocks, brand } = recommendation;
 
-  const headingFamily = `"${typography.headingFont}", "Ubuntu", system-ui, sans-serif`;
-  const bodyFamily = `"${typography.bodyFont}", "Inter", system-ui, sans-serif`;
+  const fonts = {
+    heading: `"${typography.headingFont}", "Ubuntu", Georgia, serif`,
+    body: `"${typography.bodyFont}", "Inter", system-ui, sans-serif`,
+  };
 
   return (
     <section>
@@ -24,14 +28,15 @@ export default function HomepagePreview({
           Live preview
         </h2>
         <p className="mt-1 max-w-prose text-sm text-ink-soft">
-          Rendered in your recommended palette and type pairing. Fonts fall back
-          to system faces unless they&apos;re installed locally.
+          Assembled from {blocks.length} approved Digitalfeet blocks, in your
+          recommended palette and type pairing. Fonts fall back to system faces
+          unless installed locally.
         </p>
       </div>
 
       <div
         className="overflow-hidden rounded-2xl shadow-sm ring-1 ring-gray-200"
-        style={{ backgroundColor: palette.background, fontFamily: bodyFamily }}
+        style={{ backgroundColor: palette.background, fontFamily: fonts.body }}
       >
         {/* Browser chrome */}
         <div className="flex items-center gap-1.5 border-b border-black/5 bg-gray-100 px-4 py-2.5">
@@ -42,17 +47,20 @@ export default function HomepagePreview({
 
         {/* Site nav */}
         <div
-          className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
-          style={{ backgroundColor: palette.surface }}
+          className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4 sm:px-10"
+          style={{
+            backgroundColor: palette.surface,
+            borderColor: `${palette.textMuted}1f`,
+          }}
         >
           <span
             className="font-bold"
-            style={{ fontFamily: headingFamily, color: palette.primary }}
+            style={{ fontFamily: fonts.heading, color: palette.primary }}
           >
             {brand.name}
           </span>
-          <nav className="flex flex-wrap items-center gap-4">
-            {nav.map((item) => (
+          <nav className="flex flex-wrap items-center gap-5">
+            {nav.items.map((item) => (
               <span
                 key={item}
                 className="text-xs font-medium"
@@ -62,114 +70,75 @@ export default function HomepagePreview({
               </span>
             ))}
             <span
-              className="rounded-lg px-3 py-1.5 text-xs font-semibold"
-              style={{ backgroundColor: palette.primary, color: palette.surface }}
+              className="rounded-lg border px-3 py-1.5 text-xs font-semibold"
+              style={{ borderColor: palette.primary, color: palette.primary }}
             >
-              {hero.primaryCta}
+              {nav.ctaLabel}
             </span>
           </nav>
         </div>
 
-        {/* Hero */}
-        <div className="px-6 py-10 text-center sm:px-10 sm:py-14">
-          <p
-            className="mb-3 text-xs font-semibold tracking-widest uppercase"
-            style={{ color: palette.accent }}
+        {/* Blocks */}
+        {blocks.map((block, index) => (
+          <div
+            key={`${block.blockType}-${index}`}
+            style={
+              // Alternate the ground so adjacent light blocks stay separated.
+              index % 2 === 1 && block.variant !== "accent"
+                ? { backgroundColor: palette.surface }
+                : undefined
+            }
           >
-            {hero.eyebrow}
-          </p>
-          <h3
-            className="mx-auto max-w-2xl text-3xl leading-tight font-bold sm:text-4xl"
-            style={{ fontFamily: headingFamily, color: palette.text }}
-          >
-            {hero.headline}
-          </h3>
-          <p
-            className="mx-auto mt-4 max-w-xl text-base"
-            style={{ color: palette.textMuted }}
-          >
-            {hero.subheadline}
-          </p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
-            <span
-              className="rounded-xl px-6 py-3 text-sm font-bold shadow-sm"
-              style={{ backgroundColor: palette.primary, color: palette.surface }}
-            >
-              {hero.primaryCta}
-            </span>
-            <span
-              className="rounded-xl border-2 px-6 py-3 text-sm font-bold"
-              style={{ borderColor: palette.primary, color: palette.primary }}
-            >
-              {hero.secondaryCta}
-            </span>
+            <BlockRenderer block={block} palette={palette} fonts={fonts} />
           </div>
-        </div>
+        ))}
 
-        {/* Accent rule */}
-        <div className="h-1 w-full" style={{ backgroundColor: palette.accent }} />
-
-        {/* Sections */}
-        <div className="flex flex-col gap-5 px-6 py-10 sm:px-10">
-          {sections.map((section, index) => (
-            <article
-              key={`${section.title}-${index}`}
-              className="rounded-2xl p-6 shadow-sm"
-              style={{ backgroundColor: palette.surface }}
-            >
-              <p
-                className="mb-2 text-xs font-semibold tracking-widest uppercase"
-                style={{ color: palette.accent }}
-              >
-                {section.title}
-              </p>
-              <h4
-                className="text-xl font-bold"
-                style={{ fontFamily: headingFamily, color: palette.text }}
-              >
-                {section.headline}
-              </h4>
-              <p className="mt-2 text-sm" style={{ color: palette.textMuted }}>
-                {section.body}
-              </p>
-              {section.bullets.length > 0 && (
-                <ul className="mt-4 grid gap-2 sm:grid-cols-2">
-                  {section.bullets.map((bullet, i) => (
-                    <li
-                      key={i}
-                      className="flex items-start gap-2 text-sm"
-                      style={{ color: palette.text }}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="mt-1.5 size-1.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: palette.primary }}
-                      />
-                      {bullet}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </article>
-          ))}
-        </div>
-
-        {/* Footer band */}
+        {/* Footer */}
         <div
-          className="px-6 py-8 text-center sm:px-10"
+          className="px-6 py-10 sm:px-10"
           style={{ backgroundColor: palette.primaryDark }}
         >
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div>
+              <p
+                className="text-lg font-bold"
+                style={{ fontFamily: fonts.heading, color: palette.surface }}
+              >
+                {brand.name}
+              </p>
+              <p className="mt-1 max-w-xs text-xs" style={{ color: `${palette.surface}b3` }}>
+                {brand.summary.split(".")[0]}.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-6">
+              {nav.items.map((item) => (
+                <span key={item} className="text-xs" style={{ color: `${palette.surface}cc` }}>
+                  {item}
+                </span>
+              ))}
+            </div>
+          </div>
           <p
-            className="text-lg font-bold"
-            style={{ fontFamily: headingFamily, color: palette.surface }}
+            className="mt-8 border-t pt-4 text-[11px]"
+            style={{ borderColor: `${palette.surface}26`, color: `${palette.surface}99` }}
           >
-            {hero.primaryCta}
-          </p>
-          <p className="mt-1 text-xs" style={{ color: `${palette.surface}b3` }}>
-            © {brand.name}
+            © {brand.name} · All Rights Reserved
           </p>
         </div>
       </div>
+
+      {/* Block manifest */}
+      <ul className="mt-4 flex flex-wrap gap-2">
+        {blocks.map((block, index) => (
+          <li
+            key={`${block.blockType}-tag-${index}`}
+            className="rounded-full bg-gray-100 px-3 py-1 text-xs text-ink-soft"
+          >
+            {index + 1}. {BLOCK_LIBRARY[block.blockType]?.label ?? block.blockType}
+            <span className="text-gray-400"> · {block.variant}</span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

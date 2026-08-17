@@ -1,3 +1,5 @@
+import type { BlockType, Variant } from "./blocks";
+
 export type Palette = {
   primary: string;
   primaryDark: string;
@@ -7,6 +9,27 @@ export type Palette = {
   text: string;
   textMuted: string;
   rationale: string;
+};
+
+/** One element inside a block. Which fields matter depends on the block type. */
+export type BlockItem = {
+  title: string;
+  description: string;
+  meta: string;
+  value: string;
+  bullets: string[];
+};
+
+export type Block = {
+  blockType: BlockType;
+  variant: Variant;
+  purpose: string;
+  eyebrow: string;
+  headline: string;
+  body: string;
+  primaryCta: string;
+  secondaryCta: string;
+  items: BlockItem[];
 };
 
 export type Recommendation = {
@@ -22,21 +45,11 @@ export type Recommendation = {
     bodyFont: string;
     rationale: string;
   };
-  hero: {
-    eyebrow: string;
-    headline: string;
-    subheadline: string;
-    primaryCta: string;
-    secondaryCta: string;
+  nav: {
+    items: string[];
+    ctaLabel: string;
   };
-  nav: string[];
-  sections: {
-    title: string;
-    purpose: string;
-    headline: string;
-    body: string;
-    bullets: string[];
-  }[];
+  blocks: Block[];
   seo: {
     title: string;
     metaDescription: string;
