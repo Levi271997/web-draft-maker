@@ -33,6 +33,14 @@ const TREATMENTS = [
   "quote-feature",
 ] as const;
 
+/** Treatments that put a photograph on the page. */
+const IMAGE_TREATMENTS = [
+  "full-bleed-image",
+  "split-image-left",
+  "split-image-right",
+  "gallery-mosaic",
+];
+
 const TREATMENT_NOTES: Record<string, string> = {
   "full-bleed-image": "edge-to-edge photograph with a brand-gradient overlay and text sitting on top",
   "dark-band": "full-width band in --primary-dark or --primary, light text, breaking the page rhythm",
@@ -195,7 +203,21 @@ Rules:
 - Every <img> needs meaningful alt text.
 Inline SVG (that you write) is still the right choice for icons, logos and decorative shapes.
 
-=== MOTION (CSS only — JavaScript never runs here) ===
+=== INTERACTIVITY (JavaScript DOES run — the page must feel alive) ===
+Put all script in ONE <script> tag just before </body>. Vanilla JavaScript only — no React, no jQuery, no CDN imports; external scripts will not load.
+
+Build in genuine interaction, choosing what suits this brand:
+- A working mobile menu: a hamburger button under 900px that toggles the nav, with aria-expanded kept in sync and Escape to close.
+- An accordion for any FAQ or long content — one panel open at a time, animated height or max-height, aria-expanded on the buttons.
+- Smooth scrolling for in-page nav links, with scroll-margin-top so headings clear the header.
+- A sticky header that gains a background and shadow once the page scrolls past ~60px.
+- Scroll-reveal using IntersectionObserver: sections fade and rise once as they enter view. Never leave content permanently hidden if the observer fails — start visible and enhance.
+- If there are testimonials or a gallery, a slider with working previous/next buttons and dots.
+- Any form must call preventDefault() and show an inline success message. It must never actually submit anywhere.
+
+Accessibility: every control is a real <button>, reachable by keyboard, with aria-expanded / aria-controls / aria-current where relevant and a visible :focus-visible ring.
+
+=== MOTION ===
 - Transitions on every interactive element: 200-300ms, cubic-bezier(.2,.7,.3,1).
 - Cards and buttons lift on hover: translateY(-4px) plus a deepened shadow.
 - Images scale gently inside a fixed overflow:hidden frame on hover (transform: scale(1.04)).
@@ -227,7 +249,7 @@ Real, specific, concrete. Actual names, numbers, places and detail drawn from th
 === TECHNICAL ===
 - Output ONE complete document: <!doctype html> through </html>. Nothing before or after it. No markdown fences.
 - All CSS in a single <style> block in the head. No external stylesheets besides Google Fonts.
-- ZERO JavaScript. No <script> tags — scripts never execute here, so anything relying on JS will look broken.
+- All JavaScript inline in one <script> before </body>. No external script sources — they are stripped and will not run.
 - Fully responsive: CSS grid and flexbox, clamp(), and real media queries. Check the mobile layout of every section.
 - Semantic HTML: header, nav, main, section, footer, correct heading hierarchy.
 - Accessible: strong contrast, alt text on photographs, aria-hidden on decorative SVG, visible focus styles.
@@ -323,25 +345,60 @@ function tooSimilar(a: string, b: string): boolean {
  */
 function spreadTreatments(outline: OutlineEntry[]): OutlineEntry[] {
   const used = new Map<string, number>();
+  const result: OutlineEntry[] = [];
 
-  return outline.map((section, index) => {
+  // Substitution order matters: picking the first unused treatment put a
+  // stat-strip on an FAQ. Splits suit almost any content, so try those first.
+  const SUBSTITUTES = [
+    "split-image-right",
+    "split-image-left",
+    "card-grid",
+    "gallery-mosaic",
+    "dark-band",
+    "centered-statement",
+    "full-bleed-image",
+    "overlap-feature",
+    "quote-feature",
+    "stat-strip",
+  ];
+
+  for (const section of outline) {
     let treatment = TREATMENTS.includes(section.treatment as (typeof TREATMENTS)[number])
       ? section.treatment
       : "card-grid";
 
-    const previous = index > 0 ? outline[index - 1].treatment : null;
-    const overused = (used.get(treatment) ?? 0) >= 2;
+    const previous = result.at(-1)?.treatment ?? null;
 
-    if (treatment === previous || overused) {
-      const alternative = TREATMENTS.find(
-        (t) => t !== previous && t !== treatment && (used.get(t) ?? 0) === 0,
+    if (treatment === previous || (used.get(treatment) ?? 0) >= 2) {
+      const alternative = SUBSTITUTES.find(
+        (t) => t !== previous && (used.get(t) ?? 0) === 0,
       );
       if (alternative) treatment = alternative;
     }
 
     used.set(treatment, (used.get(treatment) ?? 0) + 1);
-    return { ...section, treatment };
-  });
+    result.push({ ...section, treatment });
+  }
+
+  // A page that ends up with one photograph looks unfinished, and how many
+  // photos appear is decided entirely by which treatments carry imagery.
+  const imageCount = () =>
+    result.filter((s) => IMAGE_TREATMENTS.includes(s.treatment)).length;
+
+  for (let i = 1; i < result.length && imageCount() < 2; i++) {
+    const current = result[i].treatment;
+    // These two earn their place by being text-forward; don't overwrite them.
+    if (IMAGE_TREATMENTS.includes(current) || current === "quote-feature" || current === "stat-strip") {
+      continue;
+    }
+
+    const previous = result[i - 1].treatment;
+    const next = result[i + 1]?.treatment;
+    const swap = IMAGE_TREATMENTS.find((t) => t !== previous && t !== next);
+    if (swap) result[i] = { ...result[i], treatment: swap };
+  }
+
+  return result;
 }
 
 /** Guard against a malformed hex reaching the generated stylesheet. */
@@ -370,17 +427,22 @@ function sanitizePalette(p: Palette): Palette {
 }
 
 /**
- * The page renders in a script-free sandbox, but strip script and event
- * handlers anyway — defence in depth, and it stops a stray <script> from
- * silently swallowing the markup after it.
+ * Inline script is now wanted — the page is interactive, and it runs inside a
+ * sandbox with an opaque origin where it can only affect itself.
+ *
+ * Remote script is a different matter: it would pull unreviewed third-party
+ * code into the preview and fail unpredictably offline, so any <script> with a
+ * src is dropped. Same for stylesheets other than Google Fonts.
  */
 function sanitizeHtml(html: string): string {
   return html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
-    .replace(/<script\b[^>]*\/?>/gi, "")
-    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
-    .replace(/javascript:/gi, "#");
+    // <script src="..."> — with or without a closing tag.
+    .replace(/<script\b[^>]*\bsrc\s*=[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<script\b[^>]*\bsrc\s*=[^>]*\/?>/gi, "")
+    // Remote stylesheets that aren't Google Fonts.
+    .replace(/<link\b[^>]*rel\s*=\s*["']?stylesheet["']?[^>]*>/gi, (tag) =>
+      /fonts\.(googleapis|gstatic)\.com/i.test(tag) ? tag : "",
+    );
 }
 
 /** Models often wrap the document in a markdown fence despite instructions. */

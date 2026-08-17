@@ -117,9 +117,11 @@ second matters more than expected. Given only technical rules, a model outputs
 the median of its training data, which is a generic corporate template.
 
 - One complete document; all CSS in a single `<style>`; Google Fonts by `<link>`
-- **Zero JavaScript** — it renders in a script-free sandbox, so JS would break.
-  Motion is CSS only: transitions, `@keyframes` entrances, hover lifts, all
-  wrapped in `prefers-reduced-motion`.
+- **Working JavaScript**, inline and vanilla: mobile menu, accordions, sliders,
+  smooth scroll, sticky header, `IntersectionObserver` scroll-reveal, forms that
+  `preventDefault()` and show an inline success message
+- Motion in CSS: transitions, `@keyframes` entrances, hover lifts, all wrapped in
+  `prefers-reduced-motion`
 - **Real photography** from `picsum.photos/seed/WORD/W/H`, a different seed per
   image, art-directed with brand-gradient overlays so they don't read as stock.
   A sandboxed iframe blocks scripts, not image loading.
@@ -140,11 +142,23 @@ row, none more than twice overall. Measured on a restaurant brief: 7 sections,
 
 ### Rendering safely
 
-The page is model-written HTML, so it renders in an `<iframe sandbox="">` —
-every restriction on: no scripts, no forms, no same-origin access. Nothing the
-model writes can reach this app. As defence in depth the server also strips
-`<script>` tags, `on*` handlers and `javascript:` URLs before the HTML is
-returned, and rejects a response that isn't a complete document.
+The generated page is interactive, so its JavaScript has to run — but it is
+model-written code and must never run as us.
+
+It renders in `<iframe sandbox="allow-scripts">`. Granting `allow-scripts`
+while withholding `allow-same-origin` puts the document on a unique **opaque
+origin**: it can script itself and nothing else — no access to this app's DOM,
+cookies or storage. Those two flags together would defeat the sandbox entirely,
+which is why `allow-same-origin` is never added.
+
+**Full screen** (`/preview?k=…`) works the same way. The document is handed to
+the new tab through `localStorage` and rendered in an identically sandboxed
+frame — deliberately *not* written into the window directly, which would hand
+model-authored script our real origin.
+
+The server additionally drops `<script src>` and any non-Google-Fonts
+stylesheet, so no unreviewed third-party code enters the preview, and rejects a
+response that isn't a complete document.
 
 > Trade-off worth knowing: output is no longer guaranteed to map onto the
 > approved Elementor blocks, so a generated page may not be buildable from the

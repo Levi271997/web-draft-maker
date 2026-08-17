@@ -7,9 +7,9 @@ import type { Recommendation } from "@/lib/types";
  * The generated page is a complete HTML document written by the model, so it
  * renders in an iframe rather than as React components.
  *
- * `sandbox=""` applies every restriction: no scripts, no forms, no same-origin
- * access. The page is generated CSS-only, so nothing is lost, and nothing the
- * model wrote can touch this app.
+ * `sandbox="allow-scripts"` lets its JavaScript run — menus, accordions and
+ * sliders all need it — while withholding `allow-same-origin`, which keeps the
+ * document on a unique opaque origin. It can script itself and nothing else.
  */
 
 const DEVICES = [
@@ -18,6 +18,9 @@ const DEVICES = [
 ] as const;
 
 type DeviceId = (typeof DEVICES)[number]["id"];
+
+const PREVIEW_PREFIX = "df-preview-";
+const MAX_STORED = 5;
 
 export default function HomepagePreview({
   recommendation,
@@ -39,6 +42,29 @@ export default function HomepagePreview({
     }
   }
 
+  /**
+   * Hands the document to a new tab through localStorage rather than writing it
+   * into the window directly, which would run it on our own origin.
+   */
+  function openInNewWindow() {
+    try {
+      const key = Math.random().toString(36).slice(2, 10);
+
+      // Keep only the most recent few — each holds a full document.
+      const existing = Object.keys(window.localStorage)
+        .filter((k) => k.startsWith(PREVIEW_PREFIX))
+        .sort();
+      for (const stale of existing.slice(0, Math.max(0, existing.length - (MAX_STORED - 1)))) {
+        window.localStorage.removeItem(stale);
+      }
+
+      window.localStorage.setItem(PREVIEW_PREFIX + key, recommendation.html);
+      window.open(`/preview?k=${key}`, "_blank", "noopener,noreferrer");
+    } catch {
+      // Storage blocked (private mode, quota). Fall back to the inline frame.
+    }
+  }
+
   return (
     <section>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
@@ -50,12 +76,12 @@ export default function HomepagePreview({
             Live preview
           </h2>
           <p className="mt-1 max-w-prose text-sm text-ink-soft">
-            A real, self-contained page written for this brand — not assembled
-            from a template.
+            A real, working page — the menu, accordions and sliders all
+            function. Click around inside it.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex gap-0.5 rounded-lg bg-gray-100 p-0.5">
             {DEVICES.map((d) => (
               <button
@@ -81,6 +107,23 @@ export default function HomepagePreview({
           >
             {copied ? "Copied ✓" : "Copy HTML"}
           </button>
+
+          <button
+            type="button"
+            onClick={openInNewWindow}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-bold text-white transition hover:bg-brand-dark"
+          >
+            Open full screen
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M14 4h6v6M20 4l-8 8M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -100,7 +143,7 @@ export default function HomepagePreview({
             key={`${device}-${recommendation.html.length}`}
             title={`${recommendation.brand.name} homepage preview`}
             srcDoc={recommendation.html}
-            sandbox=""
+            sandbox="allow-scripts"
             loading="lazy"
             className="h-180 border-0 bg-white transition-all sm:rounded-lg sm:shadow-lg"
             style={{ width: active.width, maxWidth: "100%" }}
@@ -109,8 +152,9 @@ export default function HomepagePreview({
       </div>
 
       <p className="mt-3 text-xs text-ink-soft">
-        Scroll inside the frame to see the whole page. Photographs are
-        placeholders from picsum.photos — a real build would use your own.
+        Scroll and click inside the frame, or open it full screen in a new tab.
+        Photographs are placeholders from picsum.photos — a real build would use
+        your own.
       </p>
     </section>
   );
