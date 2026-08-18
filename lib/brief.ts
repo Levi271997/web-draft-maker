@@ -113,64 +113,6 @@ export const BUSINESS_TYPES: BusinessType[] = [
   },
 ];
 
-/**
- * The highest-value question on the form. A non-technical client answers this
- * instantly and correctly, and it maps straight onto block selection — which
- * the model would otherwise be guessing at.
- */
-export type Goal = {
-  id: string;
-  label: string;
-  hint: string;
-  /** What the page must therefore do — stated as intent, not as a template. */
-  demands: string;
-};
-
-export const GOALS: Goal[] = [
-  {
-    id: "calls",
-    label: "Get phone calls",
-    hint: "People ring you to get started",
-    demands:
-      "the phone number must be impossible to miss — in the header, repeated mid-page, and in a closing call to action",
-  },
-  {
-    id: "bookings",
-    label: "Take bookings",
-    hint: "Appointments, tables or jobs booked in",
-    demands:
-      "a prominent booking or enquiry form, plus a short explanation of what happens after they book",
-  },
-  {
-    id: "sell",
-    label: "Sell online",
-    hint: "Products or packages bought on the site",
-    demands:
-      "clearly priced products or packages with what each includes, and an obvious buying action",
-  },
-  {
-    id: "showcase",
-    label: "Show my work",
-    hint: "Photos of past jobs, projects or results",
-    demands:
-      "a strong visual gallery or case-study section carrying real weight on the page, backed by customer proof",
-  },
-  {
-    id: "explain",
-    label: "Explain my services",
-    hint: "Make it clear what you do and for whom",
-    demands:
-      "a clear breakdown of services and who each is for, written so a first-time visitor understands immediately",
-  },
-  {
-    id: "google",
-    label: "Be found on Google",
-    hint: "Get discovered by people searching",
-    demands:
-      "substantial descriptive text, location and service keywords used naturally, and an answers/FAQ section",
-  },
-];
-
 /** Shown as small rendered mockups, never as adjectives. */
 export type StylePreset = {
   id: string;
@@ -231,13 +173,17 @@ export const COLOR_CHOICES = [
   { id: "teal", label: "Teal", hex: "#0f766e" },
 ];
 
+/**
+ * Goals used to live here, but they apply to both routes in — a client with an
+ * existing site wants something from a redesign too — so they were lifted out
+ * alongside sections and facts. See lib/goals.
+ */
 export type Brief = {
   businessType: string;
   name: string;
   description: string;
   /** Optional Facebook page / listing we try to read extra copy from. */
   sourceUrl: string;
-  goals: string[];
   style: string;
   color: string;
   extra: string;
@@ -254,14 +200,6 @@ function clean(value: unknown, max: number): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
-function cleanList(value: unknown, allowed: string[]): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((v): v is string => typeof v === "string")
-    .filter((v) => allowed.includes(v))
-    .slice(0, allowed.length);
-}
-
 /** Throws with a user-facing message when the required answers are missing. */
 export function parseBrief(input: unknown): Brief {
   const raw = (input ?? {}) as Record<string, unknown>;
@@ -271,7 +209,6 @@ export function parseBrief(input: unknown): Brief {
     name: clean(raw.name, LIMITS.name),
     description: clean(raw.description, LIMITS.description),
     sourceUrl: clean(raw.sourceUrl, LIMITS.sourceUrl),
-    goals: cleanList(raw.goals, GOALS.map((g) => g.id)),
     style: clean(raw.style, 40),
     color: clean(raw.color, 40),
     extra: clean(raw.extra, LIMITS.extra),
@@ -284,9 +221,6 @@ export function parseBrief(input: unknown): Brief {
   if (brief.description.length < 20) {
     throw new Error("Please tell us in a sentence what you do for customers.");
   }
-  if (brief.goals.length === 0) {
-    throw new Error("Please pick at least one thing you want the website to do.");
-  }
 
   return brief;
 }
@@ -296,10 +230,6 @@ export function briefToPrompt(b: Brief, extraCopy?: string): string {
   const style = STYLE_PRESETS.find((s) => s.id === b.style);
   const color = COLOR_CHOICES.find((c) => c.id === b.color);
 
-  const goals = b.goals
-    .map((id) => GOALS.find((g) => g.id === id))
-    .filter((g): g is Goal => Boolean(g));
-
   return [
     "This brand has NO existing website. Design its first homepage from this brief.",
     "",
@@ -308,9 +238,6 @@ export function briefToPrompt(b: Brief, extraCopy?: string): string {
     "",
     "What they do, in their own words:",
     b.description,
-    "",
-    "What they want the website to achieve — this drives the page structure:",
-    ...goals.map((g) => `- ${g.label}: so ${g.demands}.`),
     "",
     style ? `Look and feel they chose: ${style.label}. ${style.direction}` : "",
     color ? `Colour they leaned towards: ${color.label} (${color.hex}). Build the palette around it — you may adjust the exact shade for contrast.` : "",

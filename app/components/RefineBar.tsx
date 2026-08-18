@@ -1,6 +1,9 @@
 "use client";
 
+import { useState } from "react";
+import type { LeadContext } from "@/lib/lead";
 import { REFINEMENTS, type RefineKey } from "@/lib/refine";
+import BookCallModal from "./BookCallModal";
 
 /**
  * The reason the preview isn't the end of the journey. Clients can't say what's
@@ -20,14 +23,19 @@ export default function RefineBar({
   versionCount,
   onRefine,
   bookingUrl,
+  brandName,
+  context,
 }: {
   loading: boolean;
   pending: RefineKey | null;
   versionCount: number;
   onRefine: (key: RefineKey) => void;
   bookingUrl: string;
+  brandName: string;
+  context: LeadContext;
 }) {
   const regenerating = pending === "regenerate";
+  const [booking, setBooking] = useState(false);
 
   return (
     <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 sm:p-8">
@@ -109,10 +117,9 @@ export default function RefineBar({
           we&apos;ll turn it into a real website — your photos, your words, built
           properly and launched.
         </p>
-        <a
-          href={bookingUrl}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={() => setBooking(true)}
           className="mt-5 inline-flex items-center gap-2 rounded-xl bg-accent px-6 py-3 font-heading text-base font-bold text-ink shadow-sm transition hover:bg-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
         >
           Book a call with Digitalfeet
@@ -125,8 +132,16 @@ export default function RefineBar({
               strokeLinejoin="round"
             />
           </svg>
-        </a>
+        </button>
       </div>
+
+      <BookCallModal
+        open={booking}
+        onClose={() => setBooking(false)}
+        brandName={brandName}
+        bookingUrl={bookingUrl}
+        context={context}
+      />
     </section>
   );
 }

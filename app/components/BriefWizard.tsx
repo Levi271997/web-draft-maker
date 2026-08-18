@@ -1,33 +1,48 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   BUSINESS_TYPES,
   COLOR_CHOICES,
-  GOALS,
   STYLE_PRESETS,
   type Brief,
 } from "@/lib/brief";
+import type { Facts } from "@/lib/facts";
+import { getSection } from "@/lib/sections";
+import DetailsPanel from "./DetailsPanel";
+import GoalPicker from "./GoalPicker";
+import SectionPicker from "./SectionPicker";
 
 /**
- * Four guided steps for a client who has never had a website. Every question is
- * answered by pointing at something; the one free-text field arrives pre-filled
- * from their business type so nobody meets an empty box.
+ * Six guided steps for a client who has never had a website. Nearly every
+ * question is answered by pointing at something, and the free-text fields
+ * either arrive pre-filled or are explicitly optional, so nobody meets a blank
+ * box they feel obliged to fill.
  */
 
 const STEPS = [
   { title: "What kind of business is it?", sub: "Pick the closest one." },
   { title: "What's it called?", sub: "And one line on what you do." },
   { title: "What should the website do?", sub: "Choose as many as you like." },
+  {
+    title: "What should be on the page?",
+    sub: "We've ticked the usual ones — add or remove any.",
+  },
+  {
+    title: "How do people reach you?",
+    sub: "Anything you skip, we leave off the page rather than making it up.",
+  },
   { title: "Which of these feels like you?", sub: "Just go with your gut." },
 ];
+
+/** Where the picker lives — also where the summary strip jumps to. */
+const SECTION_STEP = 3;
 
 const EMPTY: Brief = {
   businessType: "",
   name: "",
   description: "",
   sourceUrl: "",
-  goals: [],
   style: "",
   color: "",
   extra: "",
@@ -35,9 +50,22 @@ const EMPTY: Brief = {
 
 export default function BriefWizard({
   loading,
+  sections,
+  onSectionsChange,
+  goals,
+  onGoalsChange,
+  facts,
+  onFactsChange,
   onSubmit,
 }: {
   loading: boolean;
+  /** All three are lifted to the parent so answers survive a switch of tabs. */
+  sections: string[];
+  onSectionsChange: (next: string[]) => void;
+  goals: string[];
+  onGoalsChange: (next: string[]) => void;
+  facts: Facts;
+  onFactsChange: (next: Facts) => void;
   onSubmit: (brief: Brief) => void;
 }) {
   const [step, setStep] = useState(0);
@@ -45,13 +73,22 @@ export default function BriefWizard({
   // Tracks whether the user edited the pre-filled line, so switching business
   // type doesn't silently overwrite something they wrote.
   const [touchedDescription, setTouchedDescription] = useState(false);
+  // Set when the picker is opened from the summary strip, so it behaves as a
+  // detour and drops them back where they were rather than mid-sequence.
+  const [returnStep, setReturnStep] = useState<number | null>(null);
 
-  const canAdvance = useMemo(() => {
-    if (step === 0) return brief.businessType !== "";
-    if (step === 1) return brief.name.trim() !== "" && brief.description.trim().length >= 20;
-    if (step === 2) return brief.goals.length > 0;
-    return true;
-  }, [step, brief]);
+  const stepValid = useCallback(
+    (index: number) => {
+      if (index === 0) return brief.businessType !== "";
+      if (index === 1) return brief.name.trim() !== "" && brief.description.trim().length >= 20;
+      if (index === 2) return goals.length > 0;
+      return true;
+    },
+    [brief, goals],
+  );
+
+  const canAdvance = useMemo(() => stepValid(step), [stepValid, step]);
+  const detouring = step === SECTION_STEP && returnStep !== null;
 
   function set<K extends keyof Brief>(key: K, value: Brief[K]) {
     setBrief((prev) => ({ ...prev, [key]: value }));
@@ -69,21 +106,38 @@ export default function BriefWizard({
     setStep(1);
   }
 
-  function toggleGoal(id: string) {
-    setBrief((prev) => ({
-      ...prev,
-      goals: prev.goals.includes(id)
-        ? prev.goals.filter((g) => g !== id)
-        : [...prev.goals, id],
-    }));
+  function editSections() {
+    setReturnStep(step);
+    setStep(SECTION_STEP);
+  }
+
+  function endDetour() {
+    setStep(returnStep ?? SECTION_STEP);
+    setReturnStep(null);
   }
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+
+    if (detouring) {
+      endDetour();
+      return;
+    }
+
     if (step < STEPS.length - 1) {
       if (canAdvance) setStep(step + 1);
       return;
     }
+
+    // Backstop. Nothing in the normal sequence can reach the end with a step
+    // unanswered, but a detour makes forward jumps possible — so send them to
+    // the first gap instead of posting a brief the server will reject.
+    const missing = [0, 1, 2].find((index) => !stepValid(index));
+    if (missing !== undefined) {
+      setStep(missing);
+      return;
+    }
+
     onSubmit(brief);
   }
 
@@ -206,54 +260,25 @@ export default function BriefWizard({
 
       {/* ---------------- Step 3: goals ---------------- */}
       {step === 2 && (
-        <div className="grid gap-2.5 sm:grid-cols-2">
-          {GOALS.map((goal) => {
-            const active = brief.goals.includes(goal.id);
-            return (
-              <button
-                key={goal.id}
-                type="button"
-                disabled={loading}
-                onClick={() => toggleGoal(goal.id)}
-                aria-pressed={active}
-                className={`flex items-start gap-3 rounded-xl border-2 px-4 py-3.5 text-left transition ${
-                  active
-                    ? "border-brand bg-brand/5"
-                    : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
-                }`}
-              >
-                <span
-                  aria-hidden="true"
-                  className={`mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md border-2 ${
-                    active ? "border-brand bg-brand text-white" : "border-gray-300"
-                  }`}
-                >
-                  {active && (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="m5 13 4 4L19 7"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </span>
-                <span>
-                  <span className="block text-sm font-semibold text-ink">
-                    {goal.label}
-                  </span>
-                  <span className="block text-xs text-ink-soft">{goal.hint}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        <GoalPicker value={goals} onChange={onGoalsChange} disabled={loading} />
       )}
 
-      {/* ---------------- Step 4: look and feel ---------------- */}
-      {step === 3 && (
+      {/* ---------------- Step 4: sections ---------------- */}
+      {step === SECTION_STEP && (
+        <SectionPicker
+          value={sections}
+          onChange={onSectionsChange}
+          disabled={loading}
+        />
+      )}
+
+      {/* ---------------- Step 5: contact details and credentials ---------------- */}
+      {step === 4 && (
+        <DetailsPanel value={facts} onChange={onFactsChange} disabled={loading} />
+      )}
+
+      {/* ---------------- Step 6: look and feel ---------------- */}
+      {step === 5 && (
         <div className="flex flex-col gap-6">
           <div className="grid gap-3 sm:grid-cols-2">
             {STYLE_PRESETS.map((preset) => {
@@ -329,13 +354,19 @@ export default function BriefWizard({
         </div>
       )}
 
+      {/* Sits above the controls, so it's on the path of every step rather than
+          only visible to someone who happens to reach step 4. */}
+      {step !== SECTION_STEP && (
+        <SectionSummary sections={sections} disabled={loading} onEdit={editSections} />
+      )}
+
       {/* ---------------- Controls ---------------- */}
       <div className="mt-6 flex items-center justify-between gap-3">
         {step > 0 ? (
           <button
             type="button"
             disabled={loading}
-            onClick={() => setStep(step - 1)}
+            onClick={() => (detouring ? endDetour() : setStep(step - 1))}
             className="rounded-xl px-4 py-3 text-sm font-semibold text-ink-soft transition hover:text-ink disabled:opacity-50"
           >
             ← Back
@@ -355,10 +386,57 @@ export default function BriefWizard({
               className="df-spin size-4 rounded-full border-2 border-white/40 border-t-white"
             />
           )}
-          {loading ? "Generating…" : isLast ? "Create Homepage" : "Next →"}
+          {loading
+            ? "Generating…"
+            : detouring
+              ? "Done"
+              : isLast
+                ? "Create Homepage"
+                : "Next →"}
         </button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Keeps the page structure on screen throughout the wizard. Without it the
+ * section choice is invisible until step 4, and a client who looks for it on
+ * step 1 concludes the option doesn't exist.
+ */
+function SectionSummary({
+  sections,
+  disabled,
+  onEdit,
+}: {
+  sections: string[];
+  disabled: boolean;
+  onEdit: () => void;
+}) {
+  const labels = sections
+    .map((id) => getSection(id)?.label)
+    .filter((label): label is string => Boolean(label));
+
+  const shown = labels.slice(0, 4);
+  const rest = labels.length - shown.length;
+
+  return (
+    <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-cream px-4 py-3">
+      <p className="min-w-0 text-xs text-ink-soft">
+        <span className="font-semibold text-ink">Your page will have: </span>
+        {shown.join(" · ")}
+        {rest > 0 && ` · +${rest} more`}
+      </p>
+
+      <button
+        type="button"
+        onClick={onEdit}
+        disabled={disabled}
+        className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-ink transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Change sections
+      </button>
+    </div>
   );
 }
 

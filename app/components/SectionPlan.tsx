@@ -1,3 +1,4 @@
+import { getSection } from "@/lib/sections";
 import type { GenerateMode, Recommendation } from "@/lib/types";
 
 export default function SectionPlan({
@@ -18,8 +19,8 @@ export default function SectionPlan({
         Why this page is built this way
       </h2>
       <p className="mt-1 max-w-prose text-sm text-ink-soft">
-        The sections were chosen for this business specifically — not picked
-        from a fixed template.
+        You chose the sections. What each one is called, the job it does and how
+        it&apos;s laid out were decided for this business specifically.
       </p>
 
       <ol className="mt-5 flex flex-col gap-4">
@@ -34,6 +35,13 @@ export default function SectionPlan({
             <div className="min-w-0">
               <h3 className="flex flex-wrap items-center gap-2 font-heading text-base font-bold text-ink">
                 {section.title}
+                {/* Closes the loop back to what they ticked — the title is
+                    written for the brand, so the mapping isn't obvious. */}
+                {getSection(section.section) && (
+                  <span className="rounded bg-brand/10 px-1.5 py-0.5 text-[11px] font-medium text-brand">
+                    {getSection(section.section)!.label}
+                  </span>
+                )}
                 {section.treatment && (
                   <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] font-normal text-ink-soft">
                     {section.treatment}

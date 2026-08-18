@@ -3,10 +3,17 @@
 import { useRef, useState } from "react";
 import type { GenerateMode, GenerateResponse } from "@/lib/types";
 import type { Brief } from "@/lib/brief";
+import { EMPTY_FACTS, hasAnyFact, type Facts } from "@/lib/facts";
 import { REFINEMENTS, type RefineKey } from "@/lib/refine";
+import { DEFAULT_SECTIONS } from "@/lib/sections";
+import { BUSINESS_TYPES } from "@/lib/brief";
 import BriefWizard from "./BriefWizard";
 import BrandReadout from "./BrandReadout";
+import DetailsPanel from "./DetailsPanel";
+import GoalPicker from "./GoalPicker";
+import LoadingState from "./LoadingState";
 import HomepagePreview from "./HomepagePreview";
+import SectionPicker from "./SectionPicker";
 import SectionPlan from "./SectionPlan";
 import RefineBar from "./RefineBar";
 import VersionBar, { type Version } from "./VersionBar";
@@ -31,24 +38,42 @@ const TABS: { id: GenerateMode; label: string; hint: string }[] = [
   {
     id: "brief",
     label: "I don't have one yet",
-    hint: "Answer four quick questions and we'll design your first one.",
+    hint: "Answer a few quick questions and we'll design your first one.",
   },
 ];
 
-/** What produced the current result, so a refine can re-send the same input. */
-type LastRequest =
+/**
+ * What produced the current result, so a refine can re-send the same input.
+ * Sections are snapshotted here rather than read live: retouching the picker
+ * after a result shouldn't silently change what "Friendlier" regenerates.
+ */
+type LastRequest = { sections: string[]; goals: string[]; facts: Facts } & (
   | { mode: "url"; url: string }
-  | { mode: "brief"; brief: Brief };
+  | { mode: "brief"; brief: Brief }
+);
 
 export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
   const [mode, setMode] = useState<GenerateMode>("url");
   const [url, setUrl] = useState("");
+  // Shared across both tabs — these three questions are the same either way,
+  // whether or not the client already has a site to scrape.
+  const [sections, setSections] = useState<string[]>(DEFAULT_SECTIONS);
+  const [goals, setGoals] = useState<string[]>([]);
+  const [facts, setFacts] = useState<Facts>(EMPTY_FACTS);
 
   const [loading, setLoading] = useState(false);
   const [refining, setRefining] = useState<RefineKey | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
+
+  // What the loading screen shows while the request is in flight. Held in state
+  // rather than read off lastRequest, which is a ref and wouldn't re-render.
+  const [pending, setPending] = useState<{
+    subject: string;
+    industry: string;
+    area: string;
+  } | null>(null);
 
   const lastRequest = useRef<LastRequest | null>(null);
   const resultsRef = useRef<HTMLDivElement | null>(null);
@@ -63,6 +88,14 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
     if (loading) return;
 
     lastRequest.current = request;
+    setPending({
+      subject: request.mode === "url" ? request.url : request.brief.name,
+      industry:
+        request.mode === "brief"
+          ? (BUSINESS_TYPES.find((t) => t.id === request.brief.businessType)?.industry ?? "")
+          : "",
+      area: request.facts.area,
+    });
     setLoading(true);
     setRefining(refine ?? null);
     setError(null);
@@ -74,10 +107,17 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
     }
 
     try {
+      const common = {
+        sections: request.sections,
+        goals: request.goals,
+        facts: request.facts,
+        refine,
+        avoidPrimary,
+      };
       const body =
         request.mode === "url"
-          ? { mode: "url", url: request.url, refine, avoidPrimary }
-          : { mode: "brief", brief: request.brief, refine, avoidPrimary };
+          ? { mode: "url", url: request.url, ...common }
+          : { mode: "brief", brief: request.brief, ...common };
 
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -161,7 +201,7 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (url.trim()) run({ mode: "url", url });
+                if (url.trim()) run({ mode: "url", url, sections, goals, facts });
               }}
               noValidate
             >
@@ -219,12 +259,70 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
                   </button>
                 ))}
               </div>
+
+              {/* Not folded away. A scrape shows what the site has and never
+                  what the business wants, and that gap is usually the reason
+                  they're here — so this one question is worth the friction. */}
+              <div className="mt-6 border-t border-gray-200 pt-5">
+                <h3 className="font-heading text-sm font-bold text-ink">
+                  What should the new homepage do?
+                </h3>
+                <p className="mt-0.5 mb-3 text-xs text-ink-soft">
+                  We can read your branding, but not what you want out of a
+                  redesign. Pick as many as you like.
+                </p>
+                <GoalPicker value={goals} onChange={setGoals} disabled={loading} />
+              </div>
+
+              {/* Folded away — the paste-and-go path stays intact for anyone
+                  who just wants to see what the tool does. */}
+              <details className="mt-4 rounded-xl border border-gray-200 bg-cream">
+                <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-ink marker:content-none">
+                  <span className="flex items-center justify-between gap-3">
+                    <span>
+                      Sections and your details{" "}
+                      <span className="font-normal text-ink-soft">
+                        {sections.length} sections
+                        {hasAnyFact(facts) ? " · details added" : ""}
+                      </span>
+                    </span>
+                    <span aria-hidden="true" className="text-ink-soft">
+                      Edit
+                    </span>
+                  </span>
+                </summary>
+                <div className="flex flex-col gap-6 border-t border-gray-200 px-4 py-4">
+                  <div>
+                    <h4 className="mb-2 text-sm font-semibold text-ink">
+                      Which sections should the page have?
+                    </h4>
+                    <SectionPicker
+                      value={sections}
+                      onChange={setSections}
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="border-t border-gray-200 pt-5">
+                    <h4 className="mb-2 text-sm font-semibold text-ink">
+                      Your contact details and credentials
+                    </h4>
+                    <DetailsPanel value={facts} onChange={setFacts} disabled={loading} />
+                  </div>
+                </div>
+              </details>
             </form>
           </>
         ) : (
           <BriefWizard
             loading={loading}
-            onSubmit={(brief) => run({ mode: "brief", brief })}
+            sections={sections}
+            onSectionsChange={setSections}
+            goals={goals}
+            onGoalsChange={setGoals}
+            facts={facts}
+            onFactsChange={setFacts}
+            onSubmit={(brief) => run({ mode: "brief", brief, sections, goals, facts })}
           />
         )}
 
@@ -239,7 +337,14 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
         )}
       </section>
 
-      {loading && !result && <LoadingState mode={mode} />}
+      {loading && !result && (
+        <LoadingState
+          mode={mode}
+          subject={pending?.subject ?? ""}
+          industry={pending?.industry}
+          area={pending?.area}
+        />
+      )}
 
       {result && (
         <div
@@ -266,6 +371,15 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
             versionCount={versions.length}
             onRefine={handleRefine}
             bookingUrl={bookingUrl}
+            brandName={result.recommendation.brand.name}
+            context={{
+              mode: result.mode,
+              brandName: result.recommendation.brand.name,
+              versionCount: versions.length,
+              versionLabel: versions[activeIndex]?.label ?? "Original",
+              goals,
+              sections,
+            }}
           />
           <SectionPlan mode={result.mode} recommendation={result.recommendation} />
         </div>
@@ -274,42 +388,3 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
   );
 }
 
-function LoadingState({ mode }: { mode: GenerateMode }) {
-  const steps =
-    mode === "url"
-      ? [
-          "Fetching your homepage",
-          "Reading colors and typefaces",
-          "Choosing blocks and writing copy",
-        ]
-      : [
-          "Reading your answers",
-          "Designing a palette and type pairing",
-          "Choosing blocks and writing copy",
-        ];
-
-  return (
-    <section className="df-fade-up rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 sm:p-8">
-      <h2 className="font-heading text-h3-m font-bold text-ink">
-        {mode === "url" ? "Analysing your branding" : "Designing your homepage"}
-      </h2>
-      <ul className="mt-4 flex flex-col gap-3">
-        {steps.map((step) => (
-          <li key={step} className="flex items-center gap-3 text-sm text-ink-soft">
-            <span
-              aria-hidden="true"
-              className="df-spin size-3.5 shrink-0 rounded-full border-2 border-brand/25 border-t-brand"
-            />
-            {step}
-          </li>
-        ))}
-      </ul>
-      <div className="mt-6 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-        <div className="gradient-brand h-full w-1/3 rounded-full" />
-      </div>
-      <p className="mt-3 text-xs text-ink-soft">
-        This usually takes 10–30 seconds.
-      </p>
-    </section>
-  );
-}

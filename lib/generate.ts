@@ -1,6 +1,14 @@
 import OpenAI from "openai";
 import type { ScrapedBrand } from "./scrape";
 import { briefToPrompt, type Brief } from "./brief";
+import { factsToPrompt, parseFacts, type Facts } from "./facts";
+import { goalsToPrompt, parseGoals } from "./goals";
+import {
+  getSection,
+  outlineSections,
+  parseSections,
+  sectionsToPrompt,
+} from "./sections";
 import type { Identity, OutlineEntry, Palette, Recommendation } from "./types";
 
 /**
@@ -31,6 +39,8 @@ const TREATMENTS = [
   "gallery-mosaic",
   "stat-strip",
   "quote-feature",
+  "logo-row",
+  "form-panel",
 ] as const;
 
 /** Treatments that put a photograph on the page. */
@@ -52,9 +62,16 @@ const TREATMENT_NOTES: Record<string, string> = {
   "gallery-mosaic": "an uneven photo grid where one tile spans two columns or rows",
   "stat-strip": "a row of oversized figures with small labels beneath",
   "quote-feature": "one large pull-quote at display size, attributed, with generous padding",
+  "logo-row": "a single quiet horizontal row of marks on a plain band, evenly spaced, wrapping on mobile",
+  "form-panel": "a two-column panel with the form on one side and contact details or reassurance on the other",
 };
 
-const IDENTITY_SCHEMA = {
+/**
+ * Built per request rather than as a constant: pinning `section` to an enum of
+ * exactly what the client ticked is what stops the model quietly inventing a
+ * pricing block nobody asked for.
+ */
+const identitySchema = (sectionIds: string[]) => ({
   type: "object",
   additionalProperties: false,
   required: ["brand", "palette", "typography", "nav", "outline", "seo", "improvements"],
@@ -109,14 +126,22 @@ const IDENTITY_SCHEMA = {
     },
     outline: {
       type: "array",
-      description:
-        "The sections this specific homepage needs, in order, invented for this brand. 6-10 entries. Do not default to a generic template.",
+      description: `Exactly ${sectionIds.length} entries — one per section the client chose, in the order they were given. Do not add, drop or reorder.`,
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["title", "intent", "treatment"],
+        required: ["section", "title", "intent", "treatment"],
         properties: {
-          title: { type: "string", description: "Short name for the section." },
+          section: {
+            type: "string",
+            enum: sectionIds,
+            description: "Which chosen section this entry is. Use each value exactly once.",
+          },
+          title: {
+            type: "string",
+            description:
+              "Short name for this section as it reads on the page, written for this brand — not the generic block name.",
+          },
           intent: { type: "string", description: "One sentence: the job it does." },
           treatment: {
             type: "string",
@@ -142,13 +167,13 @@ const IDENTITY_SCHEMA = {
       items: { type: "string" },
     },
   },
-} as const;
+});
 
 const IDENTITY_SYSTEM = `You are a senior brand and conversion designer.
 
-You are given either (a) branding signals scraped from a client's existing website, or (b) a short brief from a client who has no website yet. Decide the brand identity and the shape of their homepage.
+You are given either (a) branding signals scraped from a client's existing website, or (b) a short brief from a client who has no website yet. Decide the brand identity and fill out the homepage they asked for.
 
-You are NOT working from a template. Invent the section list this particular brand needs — a restaurant, a law firm and a SaaS product should produce visibly different pages. Skip sections that don't earn their place, and add unusual ones where the business calls for them.
+The client has already chosen which sections the page contains, and that choice is fixed. What is still yours: what each section is called, the job it does on this particular page, and how it is laid out. A restaurant, a law firm and a SaaS product picking the same blocks must still produce visibly different pages — the difference lives in the titles, the intent and the treatments, not in the block list.
 
 Rules:
 - Ground every choice in the evidence. When a site was scraped, reuse its own colors and typefaces where they work.
@@ -161,8 +186,19 @@ Rules:
 - Write in the brand's own language. If the site is not in English, work in the site's language.
 - Be concrete. No "Lorem ipsum", no "Your Company".`;
 
-function pageSystemPrompt(id: Identity): string {
+function pageSystemPrompt(
+  id: Identity,
+  sectionIds: string[],
+  logo?: string | null,
+  context?: string,
+): string {
   const { palette, typography, brand, nav } = id;
+
+  const chrome = sectionIds
+    .map(getSection)
+    .filter((s) => s?.chrome)
+    .map((s) => `- ${s!.label}: ${s!.build}`)
+    .join("\n");
 
   return `You are an award-winning web designer. Write the complete homepage for "${brand.name}" as a single self-contained HTML document.
 
@@ -188,6 +224,13 @@ TYPE
 - Load both from Google Fonts with a <link> in the head, with weights 400;500;600;700;800.
 
 NAVIGATION: ${nav.items.join(", ")} — with a "${nav.ctaLabel}" button.
+
+=== LOGO ===
+${
+  logo
+    ? `Their existing logo is at ${logo} — use it as an <img> in the header and again, larger, in the hero. Give it an explicit height, width:auto and alt="${brand.name}". If it would sit on a dark band, put it on a light chip rather than letting it disappear.`
+    : `There is no logo file. Draw a wordmark for "${brand.name}" as inline SVG — the name set in the heading typeface with one small geometric mark beside it, built from --primary and --accent. Use the same wordmark in the header, the hero and the footer; never a placeholder box.`
+}
 
 === PHOTOGRAPHY (important — the page must not be image-free) ===
 Use real photographs from picsum.photos. The exact format:
@@ -246,6 +289,20 @@ Accessibility: every control is a real <button>, reachable by keyboard, with ari
 === COPY ===
 Real, specific, concrete. Actual names, numbers, places and detail drawn from the source material. Never "Lorem ipsum", never "Feature One", never "Your Company".
 
+=== FACTUAL DISCIPLINE — the one rule that overrides "be concrete" ===
+Facts supplied by the client, and facts visible in the source material you were given, are real. Use them verbatim: never reformat a phone number, never adjust an address, never round a figure, never upgrade a claim.
+
+Everything else is unknown, and unknown is not an invitation to invent. You must NEVER write:
+- a phone number, email address or postal address that was not given to you
+- a named person, job title or team member that was not given to you
+- a certification, accreditation, licence, registration, membership or award that was not given to you
+- a star rating, review count, customer count, year founded, response time or any other statistic that was not given to you
+- a guarantee, warranty or legal claim of any kind — "no win no fee", "fully insured", "money-back", "free quote" — unless it was given to you
+
+Where a section needs a fact you don't have, write the qualitative version instead of a fabricated figure: "trusted by families across the area", not "4.9 stars from 212 reviews". A stats section with no supplied numbers becomes a strengths section. A team section with no supplied names becomes a section about how the work gets done. Build the block the client asked for; just build it out of what is true.
+
+Invented contact details are the worst case, because they look correct and are not: if no phone number was supplied, show no phone number anywhere on the page, and point every call to action at the enquiry form instead. Same for an email address. Placeholder text like "01234 567890" or "info@example.com" is equally unacceptable.
+
 === TECHNICAL ===
 - Output ONE complete document: <!doctype html> through </html>. Nothing before or after it. No markdown fences.
 - All CSS in a single <style> block in the head. No external stylesheets besides Google Fonts.
@@ -254,15 +311,27 @@ Real, specific, concrete. Actual names, numbers, places and detail drawn from th
 - Semantic HTML: header, nav, main, section, footer, correct heading hierarchy.
 - Accessible: strong contrast, alt text on photographs, aria-hidden on decorative SVG, visible focus styles.
 
+${context ? `${context}\n\n` : ""}=== PAGE CHROME (always present, outside the numbered sections) ===
+${chrome}
+
 === SECTIONS TO BUILD (in order) ===
-Each carries a TREATMENT. Implement it literally — this is what stops the page becoming a stack of identical centred blocks.
+The client chose these blocks and this order. Build every one, build nothing else, and do not reorder them.
+
+BUILD says what the block must contain. TREATMENT says how it is laid out — implement it literally, because it is what stops the page becoming a stack of identical centred blocks.
 
 ${id.outline
   .map((s, i) => {
     const note = TREATMENT_NOTES[s.treatment] ?? "";
-    return `${i + 1}. ${s.title} — ${s.intent}\n   TREATMENT: ${s.treatment}${note ? ` (${note})` : ""}`;
+    const build = getSection(s.section)?.build;
+    return [
+      `${i + 1}. ${s.title} — ${s.intent}`,
+      `   TREATMENT: ${s.treatment}${note ? ` (${note})` : ""}`,
+      build ? `   BUILD: ${build}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
   })
-  .join("\n")}
+  .join("\n\n")}
 
 Return only the HTML document.`;
 }
@@ -339,16 +408,43 @@ function tooSimilar(a: string, b: string): boolean {
 }
 
 /**
+ * The client's section list is a contract, so a dropped, duplicated or invented
+ * entry can't be shrugged off — it would silently give them a page they didn't
+ * ask for. Rebuild the outline from what they picked, keeping whatever the model
+ * wrote for each and filling the gaps from the catalogue.
+ */
+function alignOutline(outline: OutlineEntry[], sectionIds: string[]): OutlineEntry[] {
+  const written = new Map<string, OutlineEntry>();
+  for (const entry of outline ?? []) {
+    if (entry?.section && !written.has(entry.section)) written.set(entry.section, entry);
+  }
+
+  return outlineSections(sectionIds).map((def) => {
+    const match = written.get(def.id);
+    return {
+      section: def.id,
+      title: match?.title?.trim() || def.fallback.title,
+      intent: match?.intent?.trim() || def.fallback.intent,
+      treatment: match?.treatment ?? "",
+    };
+  });
+}
+
+/**
  * Enforce the variety the prompt asks for. Models drift toward repeating a
  * comfortable treatment, and back-to-back repeats are exactly what makes a page
  * look like a template.
+ *
+ * Every substitution is drawn from the section's own shortlist first, because
+ * the generic list is what once put a stat-strip on an FAQ.
  */
 function spreadTreatments(outline: OutlineEntry[]): OutlineEntry[] {
   const used = new Map<string, number>();
   const result: OutlineEntry[] = [];
 
-  // Substitution order matters: picking the first unused treatment put a
-  // stat-strip on an FAQ. Splits suit almost any content, so try those first.
+  // Last resort, for a section with no shortlist. Splits suit almost any
+  // content, so try those first. Deliberately excludes the two section-specific
+  // treatments — a logo row on an FAQ is worse than a repeat.
   const SUBSTITUTES = [
     "split-image-right",
     "split-image-left",
@@ -362,17 +458,22 @@ function spreadTreatments(outline: OutlineEntry[]): OutlineEntry[] {
     "stat-strip",
   ];
 
+  const shortlist = (entry: OutlineEntry): string[] => {
+    const def = getSection(entry.section);
+    return def && !def.chrome && def.treatments.length ? def.treatments : [...TREATMENTS];
+  };
+
   for (const section of outline) {
-    let treatment = TREATMENTS.includes(section.treatment as (typeof TREATMENTS)[number])
-      ? section.treatment
-      : "card-grid";
+    const allowed = shortlist(section);
+    let treatment = allowed.includes(section.treatment) ? section.treatment : allowed[0];
 
     const previous = result.at(-1)?.treatment ?? null;
 
     if (treatment === previous || (used.get(treatment) ?? 0) >= 2) {
-      const alternative = SUBSTITUTES.find(
-        (t) => t !== previous && (used.get(t) ?? 0) === 0,
-      );
+      const alternative =
+        allowed.find((t) => t !== previous && (used.get(t) ?? 0) === 0) ??
+        allowed.find((t) => t !== previous && (used.get(t) ?? 0) < 2) ??
+        SUBSTITUTES.find((t) => t !== previous && (used.get(t) ?? 0) === 0);
       if (alternative) treatment = alternative;
     }
 
@@ -381,20 +482,20 @@ function spreadTreatments(outline: OutlineEntry[]): OutlineEntry[] {
   }
 
   // A page that ends up with one photograph looks unfinished, and how many
-  // photos appear is decided entirely by which treatments carry imagery.
+  // photos appear is decided entirely by which treatments carry imagery. Only
+  // sections that can legitimately hold a photo are eligible — a stats strip or
+  // an FAQ has no shortlisted image treatment, so it is passed over.
   const imageCount = () =>
     result.filter((s) => IMAGE_TREATMENTS.includes(s.treatment)).length;
 
   for (let i = 1; i < result.length && imageCount() < 2; i++) {
-    const current = result[i].treatment;
-    // These two earn their place by being text-forward; don't overwrite them.
-    if (IMAGE_TREATMENTS.includes(current) || current === "quote-feature" || current === "stat-strip") {
-      continue;
-    }
+    if (IMAGE_TREATMENTS.includes(result[i].treatment)) continue;
 
     const previous = result[i - 1].treatment;
     const next = result[i + 1]?.treatment;
-    const swap = IMAGE_TREATMENTS.find((t) => t !== previous && t !== next);
+    const swap = shortlist(result[i]).find(
+      (t) => IMAGE_TREATMENTS.includes(t) && t !== previous && t !== next,
+    );
     if (swap) result[i] = { ...result[i], treatment: swap };
   }
 
@@ -465,6 +566,12 @@ export type GenerateOptions = {
   refinement?: string;
   /** When set, a returned palette too close to this hue is retried once. */
   avoidPrimary?: string;
+  /** Section ids the client ticked. Anything invalid falls back to the defaults. */
+  sections?: string[];
+  /** Goal ids. Empty is valid — the URL path doesn't force the question. */
+  goals?: string[];
+  /** Contact details, credentials and language. All optional. */
+  facts?: Facts;
 };
 
 function client() {
@@ -498,10 +605,25 @@ export async function generateHomepage(
   const model = process.env.OPENAI_MODEL || "gpt-4o";
   const basePrompt = buildUserPrompt(source);
 
+  // Re-parsed rather than trusted: this also normalises the order and forces
+  // the required sections in, so the schema enum and the outline always agree.
+  const sections = parseSections(options.sections);
+  const sectionIds = outlineSections(sections).map((s) => s.id);
+  const logo = source.kind === "url" ? source.brand.logo : null;
+
+  // Shared across both routes in: what they want the page to do, and the facts
+  // it is allowed to state. Both passes need these — the identity pass to
+  // weight the outline, the page pass to write without inventing.
+  const context = [goalsToPrompt(parseGoals(options.goals)), factsToPrompt(parseFacts(options.facts))]
+    .filter(Boolean)
+    .join("\n\n");
+
   /* ---------------- Pass 1: identity + outline ---------------- */
 
   async function identityOnce(extra?: string): Promise<Identity> {
-    const userPrompt = [basePrompt, refinement, extra].filter(Boolean).join("\n\n");
+    const userPrompt = [basePrompt, context, sectionsToPrompt(sections), refinement, extra]
+      .filter(Boolean)
+      .join("\n\n");
 
     let completion;
     try {
@@ -514,7 +636,11 @@ export async function generateHomepage(
         ],
         response_format: {
           type: "json_schema",
-          json_schema: { name: "brand_identity", strict: true, schema: IDENTITY_SCHEMA },
+          json_schema: {
+            name: "brand_identity",
+            strict: true,
+            schema: identitySchema(sectionIds),
+          },
         },
       });
     } catch (err) {
@@ -541,7 +667,7 @@ export async function generateHomepage(
       items: (parsed.nav?.items ?? []).slice(0, 5),
       ctaLabel: parsed.nav?.ctaLabel || "Get in touch",
     };
-    parsed.outline = spreadTreatments((parsed.outline ?? []).slice(0, 10));
+    parsed.outline = spreadTreatments(alignOutline(parsed.outline ?? [], sections));
     parsed.improvements = parsed.improvements ?? [];
 
     if (parsed.outline.length === 0) {
@@ -574,7 +700,7 @@ export async function generateHomepage(
       // Polish lives in the details that get cut first when the budget is tight.
       max_completion_tokens: 16_000,
       messages: [
-        { role: "system", content: pageSystemPrompt(identity) },
+        { role: "system", content: pageSystemPrompt(identity, sections, logo, context) },
         {
           role: "user",
           content: [
