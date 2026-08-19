@@ -240,9 +240,14 @@ function photographyBlock(images: ScrapedImage[]): string {
     "- portraits for people",
     "",
     "If a section needs a full-bleed photograph WITH text over it, use picsum.photos",
-    "for that section — stock is guaranteed to be textless. This is the one case",
-    "where stock beats the client's own imagery, and it does not count against the",
-    `${required}-image minimum.`,
+    "for that section — stock is guaranteed to be textless. That is the ONLY case",
+    "where stock is preferred, and it does not excuse you from the minimum.",
+    "",
+    "Most sections never write over their image — cards, splits, galleries and",
+    "portraits all keep their text beside or beneath the picture. Those slots are",
+    `where the client's photographs belong, and there are more than enough of them`,
+    `to place ${required}. Retreating to stock everywhere is a failure, not a safe`,
+    "choice: a page of stock photography is the exact thing this tool exists to avoid.",
     "",
     "Rules for these:",
     "- Reference each URL exactly as given. Never alter, resize, crop or proxy it.",
@@ -251,6 +256,42 @@ function photographyBlock(images: ScrapedImage[]): string {
     "- Write alt text describing what the picture shows in its new context.",
     "",
   ].join("\n");
+}
+
+/**
+ * Which client photograph goes in which section.
+ *
+ * Stating a minimum and leaving placement to the model produced 2 of 7 used,
+ * twice, on two different sites. So decide it here: walk the outline, and hand
+ * each section that can hold a photograph a specific URL. The model is then
+ * following an instruction rather than exercising judgement it keeps declining
+ * to exercise.
+ *
+ * full-bleed-image is skipped on purpose — text sits on that treatment, and
+ * client marketing images often have text baked in already.
+ */
+function assignImages(
+  outline: OutlineEntry[],
+  images: ScrapedImage[],
+): Map<number, ScrapedImage> {
+  const assignment = new Map<number, ScrapedImage>();
+  if (images.length === 0) return assignment;
+
+  const queue = [...images];
+
+  outline.forEach((section, index) => {
+    if (queue.length === 0) return;
+    if (section.treatment === 'full-bleed-image') return;
+
+    const holdsPhoto =
+      IMAGE_TREATMENTS.includes(section.treatment) ||
+      section.treatment === 'card-grid' ||
+      section.treatment === 'overlap-feature';
+
+    if (holdsPhoto) assignment.set(index, queue.shift()!);
+  });
+
+  return assignment;
 }
 
 function pageSystemPrompt(
@@ -262,6 +303,7 @@ function pageSystemPrompt(
 ): string {
   const { palette, typography, brand, nav } = id;
   const photography = photographyBlock(images);
+  const assigned = assignImages(id.outline, images);
 
   const chrome = sectionIds
     .map(getSection)
@@ -287,6 +329,15 @@ PALETTE (define as CSS custom properties on :root and use throughout)
 --surface: ${palette.surface}
 --text: ${palette.text}
 --text-muted: ${palette.textMuted}
+--on-primary: ${palette.onPrimary}   /* text/icons ON --primary */
+--on-accent: ${palette.onAccent}     /* text/icons ON --accent  */
+
+CONTRAST IS NOT NEGOTIABLE. --on-primary and --on-accent were measured against
+WCAG AA for you. Any text, label or icon sitting on --primary uses --on-primary;
+anything on --accent uses --on-accent. Never write white on a colour just
+because it looks conventional — on a light brand colour it is unreadable.
+For text on a photograph, put a scrim behind it: a solid or gradient overlay at
+55% or more, never text straight onto an image.
 
 TYPE
 - Headings: "${typography.headingFont}"  |  Body: "${typography.bodyFont}"
@@ -309,7 +360,7 @@ ${photography}For any image slot the list above did not fill, use picsum.photos.
 Rules:
 - Use a DIFFERENT seed word per image (e.g. /seed/harbour/, /seed/atelier/) so no two repeat.
 - Sizes: hero/full-bleed 1600/900, cards 800/600, tall portraits 600/800, avatars 200/200.
-- Always set width/height attributes and style with object-fit: cover, plus a border-radius that matches the page.
+- EVERY <img> needs width and height attributes, without exception — for picsum use the numbers already in the URL. Missing them makes the page jump around as photographs load. Style with object-fit: cover plus a border-radius that matches the page.
 - Art-direct them so they don't read as stock: overlay a brand-colour gradient
   (e.g. linear-gradient(180deg, transparent, var(--primary-dark)) at 50-80% opacity),
   or apply filter: saturate(0.8) contrast(1.05), or a duotone-ish blend mode.
@@ -359,6 +410,16 @@ Accessibility: every control is a real <button>, reachable by keyboard, with ari
 - Consider a subtle grain or mesh-gradient backdrop on one dark section.
 - Buttons: real presence — solid fill, adequate padding (0.9rem 1.6rem), clear hover and visible :focus-visible ring.
 
+=== EVERY LINK MUST GO SOMEWHERE ===
+href="#" is forbidden. A button that does nothing is the most obvious flaw a
+client finds, and pages have come back with nineteen of them.
+- In-page nav and section links point at a real id that exists on this page.
+- Every other call to action — "Get a quote", "Book", "Start", "Log in", "Buy" —
+  points at #contact if a contact section exists, otherwise at the phone number
+  as tel:, otherwise at the email as mailto:.
+- Do not invent external URLs. Social links use only the profile URLs you were
+  given; if none were given, omit the social icons entirely.
+
 === COPY ===
 Real, specific, concrete. Actual names, numbers, places and detail drawn from the source material. Never "Lorem ipsum", never "Feature One", never "Your Company".
 
@@ -396,10 +457,14 @@ ${id.outline
   .map((s, i) => {
     const note = TREATMENT_NOTES[s.treatment] ?? "";
     const build = getSection(s.section)?.build;
+    const picture = assigned.get(i);
     return [
       `${i + 1}. ${s.title} — ${s.intent}`,
       `   TREATMENT: ${s.treatment}${note ? ` (${note})` : ""}`,
       build ? `   BUILD: ${build}` : "",
+      picture
+        ? `   IMAGE: use ${picture.url} here — this is the client's own photograph and it is assigned to this section. Do not substitute stock for it.${picture.alt ? ` Their site describes it as "${picture.alt}".` : ""}`
+        : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -438,6 +503,58 @@ function buildUserPrompt(b: ScrapedBrand): string {
   ];
 
   return lines.filter(Boolean).join("\n");
+}
+
+/**
+ * Sections that state things about people and numbers need evidence, and the
+ * scrape usually doesn't have it.
+ *
+ * Told to build a team section with nothing to build it from, the model does
+ * not invent names — the factual rules stop that — it does something worse. It
+ * reaches into the page for real strings and gives them jobs. One run listed
+ * two mascots from a seasonal campaign and a client company as staff, complete
+ * with roles. Real words, wrong roles, entirely credible.
+ *
+ * So: work out what the source can actually support, and say so per section.
+ */
+function evidenceWarnings(sectionIds: string[], brand: ScrapedBrand): string {
+  const corpus = `${brand.contentOutline}\n${brand.bodyText}`.toLowerCase();
+  const warnings: string[] = [];
+
+  const mentions = (re: RegExp) => re.test(corpus);
+
+  if (sectionIds.includes("team") && !mentions(/\b(our team|meet the team|our people|staff|founder|co-founder|ceo|director|employees)\b/)) {
+    warnings.push(
+      "- team: their site names no staff. Do NOT put personal names in this section. Names you can see in the copy are campaign characters, product names or client companies, not employees. Write it about how the work gets done and who it is done by as a group, with no portraits of named individuals.",
+    );
+  }
+
+  if (sectionIds.includes("testimonials") && !mentions(/\b(testimonial|review|client says|customers say|" ?—|said |quote)\b/)) {
+    warnings.push(
+      "- testimonials: no customer quotes were found. Do not write quotation marks around words nobody said, and do not attribute anything to a named person. Use the results and case detail in their copy as evidence instead, attributed to the project or the client company.",
+    );
+  }
+
+  if (sectionIds.includes("stats") && !/\d/.test(corpus)) {
+    warnings.push(
+      "- stats: no figures were found anywhere in their copy. Write the qualitative version — what they are known for — and use no numerals at all.",
+    );
+  }
+
+  if (sectionIds.includes("pricing") && !mentions(/(\$|£|€|kr\b|price|pricing|per month|from \d)/)) {
+    warnings.push(
+      "- pricing: no prices were found. Describe what each package includes and label the cost as available on request. Never invent a figure.",
+    );
+  }
+
+  if (warnings.length === 0) return "";
+
+  return [
+    "=== SECTIONS THE SOURCE CANNOT FULLY SUPPORT ===",
+    "The client chose these, so build them — but build them out of what is true:",
+    "",
+    ...warnings,
+  ].join("\n");
 }
 
 /**
@@ -612,7 +729,80 @@ function sanitizePalette(p: Palette): Palette {
     if (!HEX_RE.test(v)) v = fallback[k];
     (out as Record<string, string>)[k] = v;
   }
-  return out;
+  return ensureContrast(out);
+}
+
+/* ---------------- Contrast ---------------- */
+
+/** Relative luminance, per WCAG 2.1. */
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function contrast(a: string, b: string): number {
+  const [light, dark] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+/** Multiply every channel, keeping hue. */
+function darken(hex: string, factor: number): string {
+  const channels = [1, 3, 5].map((i) =>
+    Math.max(0, Math.round(parseInt(hex.slice(i, i + 2), 16) * factor)),
+  );
+  return `#${channels.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Whichever of black or white is more readable on this colour. */
+function readableOn(background: string): string {
+  return contrast("#ffffff", background) >= contrast("#111111", background)
+    ? "#ffffff"
+    : "#111111";
+}
+
+/**
+ * Buttons are the one place a faithful brand colour reliably breaks the page:
+ * a mid-orange primary with white text measures about 2:1 where AA wants 4.5,
+ * and a vivid yellow accent is worse. Both were observed on real client sites.
+ *
+ * Rather than prompt for it, decide it here. The button label colour is chosen
+ * by measurement, and a primary that fails against BOTH black and white is
+ * darkened until it passes — the hue survives, the unreadability doesn't.
+ */
+function ensureContrast(p: Palette): Palette {
+  let primary = p.primary;
+
+  for (let i = 0; i < 12; i++) {
+    const best = Math.max(contrast("#ffffff", primary), contrast("#111111", primary));
+    if (best >= 4.5) break;
+    primary = darken(primary, 0.88);
+  }
+
+  // primaryDark carries deep surfaces with light text on them.
+  let primaryDark = p.primaryDark;
+  for (let i = 0; i < 12 && contrast("#ffffff", primaryDark) < 4.5; i++) {
+    primaryDark = darken(primaryDark, 0.88);
+  }
+
+  // Muted text is the other repeat offender — legible, but only just.
+  let textMuted = p.textMuted;
+  for (let i = 0; i < 12 && contrast(textMuted, p.background) < 4.5; i++) {
+    textMuted = darken(textMuted, 0.9);
+  }
+
+  return {
+    ...p,
+    primary,
+    primaryDark,
+    textMuted,
+    // Accent stays as chosen — it is decorative and often deliberately loud —
+    // but whatever sits on it is now measured rather than assumed.
+    onPrimary: readableOn(primary),
+    onAccent: readableOn(p.accent),
+  };
 }
 
 /**
@@ -632,6 +822,63 @@ function sanitizeHtml(html: string): string {
     .replace(/<link\b[^>]*rel\s*=\s*["']?stylesheet["']?[^>]*>/gi, (tag) =>
       /fonts\.(googleapis|gstatic)\.com/i.test(tag) ? tag : "",
     );
+}
+
+/**
+ * The last line of defence, applied after the model has finished.
+ *
+ * Everything here is a rule the prompt already states and the model still
+ * breaks some of the time. Prompting moves the odds; this closes them, and it
+ * is cheap because each fix is a pure string transform with a known-correct
+ * answer.
+ */
+function repairHtml(html: string, facts: Facts): string {
+  let out = html;
+
+  /* Dead links. A button that does nothing is the flaw clients spot first. */
+  const ids = new Set([...out.matchAll(/\sid=["']([^"']+)["']/g)].map((m) => m[1]));
+
+  const destination =
+    (ids.has("contact") && "#contact") ||
+    (facts.phone && `tel:${facts.phone.replace(/[^\d+]/g, "")}`) ||
+    (facts.email && `mailto:${facts.email}`) ||
+    // Last resort: whatever section is closest to a call to action.
+    (ids.has("cta") && "#cta") ||
+    null;
+
+  if (destination) {
+    out = out.replace(/href=(["'])#\1/g, `href="${destination}"`);
+  }
+
+  /* Layout shift. picsum states its dimensions in the URL, so this is exact. */
+  out = out.replace(/<img\b[^>]*>/gi, (tag) => {
+    if (/\swidth\s*=/i.test(tag) && /\sheight\s*=/i.test(tag)) return tag;
+
+    const size = tag.match(/picsum\.photos\/seed\/[^/"']+\/(\d+)\/(\d+)/i);
+    if (!size) return tag;
+
+    const attrs = [
+      /\swidth\s*=/i.test(tag) ? "" : ` width="${size[1]}"`,
+      /\sheight\s*=/i.test(tag) ? "" : ` height="${size[2]}"`,
+    ].join("");
+
+    return tag.replace(/\s*\/?>$/, `${attrs}>`);
+  });
+
+  /* Screen readers and translation tools both need this. */
+  if (!/<html[^>]*\slang=/i.test(out)) {
+    out = out.replace(/<html\b/i, '<html lang="en"');
+  }
+
+  /* A page that can't scale on a phone is unusable, not merely imperfect. */
+  if (!/<meta[^>]+name=["']viewport["']/i.test(out)) {
+    out = out.replace(
+      /<head[^>]*>/i,
+      (head) => `${head}\n<meta name="viewport" content="width=device-width, initial-scale=1">`,
+    );
+  }
+
+  return out;
 }
 
 /** Models often wrap the document in a markdown fence despite instructions. */
@@ -801,6 +1048,7 @@ export async function generateHomepage(
   const context = [
     goalsToPrompt(parseGoals(options.goals)),
     factsToPrompt(mergeFacts(parseFacts(options.facts), brand)),
+    evidenceWarnings(sections, brand),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -930,7 +1178,10 @@ export async function generateHomepage(
     throw new Error(`OpenAI declined to write the page: ${pageChoice.message.refusal}`);
   }
 
-  const html = sanitizeHtml(unfence(pageChoice?.message?.content ?? ""));
+  const html = repairHtml(
+    sanitizeHtml(unfence(pageChoice?.message?.content ?? "")),
+    mergeFacts(parseFacts(options.facts), brand),
+  );
 
   if (!/<\/html>/i.test(html) || html.length < 500) {
     throw new Error(

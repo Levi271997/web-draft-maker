@@ -281,24 +281,47 @@ function collectTagText(html: string, tag: string, limit: number): string[] {
   return out;
 }
 
+/**
+ * Their logo, or nothing.
+ *
+ * Returning nothing is a perfectly good outcome: the page prompt draws an SVG
+ * wordmark from the brand name when there is no file, and that looks far better
+ * than the wrong image. This used to fall back to og:image, which put a
+ * 1200x630 social banner in the header of any site whose logo is inline SVG or
+ * a CSS background — the worst-looking defect the tool produced.
+ */
 function extractLogo(html: string, base: string): string | null {
-  // An <img> whose class/alt/src mentions "logo" is the usual case.
-  for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
-    const hay = tag.toLowerCase();
-    if (!hay.includes("logo")) continue;
-    const src = attr(tag, "src") ?? attr(tag, "data-src");
-    if (src && !src.startsWith("data:")) return resolve(src, base);
-  }
-  const og = meta(html, "og:image");
-  if (og) return resolve(og, base);
+  const src = (tag: string) => {
+    const value = attr(tag, "src") ?? attr(tag, "data-src") ?? attr(tag, "data-lazy-src");
+    return value && !value.startsWith("data:") ? resolve(value, base) : null;
+  };
 
-  for (const tag of html.match(/<link\b[^>]*>/gi) ?? []) {
-    const rel = (attr(tag, "rel") ?? "").toLowerCase();
-    if (rel.includes("apple-touch-icon") || rel.includes("icon")) {
-      const href = attr(tag, "href");
-      if (href) return resolve(href, base);
-    }
+  // An <img> that names itself is the usual case and the only confident one.
+  for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
+    if (!/logo|wordmark|brandmark/i.test(tag)) continue;
+    const found = src(tag);
+    if (found) return found;
   }
+
+  // Otherwise the first image inside the masthead, as long as it is small
+  // enough to be a mark rather than a banner or a hero photograph.
+  const masthead = html.match(
+    /<(?:header|div)\b[^>]*(?:class|id)\s*=\s*["'][^"']*(?:header|masthead|navbar|topbar)[^"']*["'][\s\S]{0,4000}/i,
+  );
+
+  for (const tag of masthead?.[0].match(/<img\b[^>]*>/gi) ?? []) {
+    const width = Number(attr(tag, "width") ?? 0);
+    const height = Number(attr(tag, "height") ?? 0);
+    if (width && width > 400) continue;
+    if (height && height > 200) continue;
+    if (/sprite|icon-|avatar|banner|hero/i.test(tag)) continue;
+
+    const found = src(tag);
+    if (found) return found;
+  }
+
+  // Deliberately no og:image fallback, and no favicon: a 32px icon stretched
+  // into a header reads as broken. A wordmark drawn from the name is better.
   return null;
 }
 
