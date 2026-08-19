@@ -39,7 +39,6 @@ export async function POST(request: Request) {
   // the route works and to see the funnel moving.
   console.log("[lead] captured", {
     brand: lead.context.brandName,
-    mode: lead.context.mode,
     versions: lead.context.versionCount,
     settledOn: lead.context.versionLabel,
     goals: lead.context.goals,
