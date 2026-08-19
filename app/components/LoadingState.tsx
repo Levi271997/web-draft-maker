@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { SIMULATED_LOOKUP, simulateRegisterLookup } from "@/lib/proff";
-import type { GenerateMode } from "@/lib/types";
 
 /**
  * The wait, staged.
@@ -18,24 +17,19 @@ import type { GenerateMode } from "@/lib/types";
 
 type Stage = { id: string; label: string; ms: number };
 
-const GENERATION_STEPS: Record<GenerateMode, string[]> = {
-  url: ["Reading colours and typefaces", "Choosing blocks and writing copy"],
-  brief: ["Designing a palette and type pairing", "Choosing blocks and writing copy"],
-};
+const GENERATION_STEPS = [
+  "Reading colours, typefaces and photography",
+  "Choosing blocks and writing copy",
+];
 
 export default function LoadingState({
-  mode,
   subject,
-  industry,
   area,
 }: {
-  mode: GenerateMode;
-  /** The URL they entered, or the business name from the brief. */
+  /** The URL they entered. */
   subject: string;
-  industry?: string;
   area?: string;
 }) {
-  const isUrl = mode === "url";
 
   const stages: Stage[] = useMemo(
     () => [
@@ -46,9 +40,7 @@ export default function LoadingState({
       },
       {
         id: "match",
-        label: isUrl
-          ? `Matching ${subject || "your website"} to a registered company`
-          : `Looking up ${subject || "your business"}`,
+        label: `Matching ${subject || "your website"} to a registered company`,
         ms: 1400,
       },
       {
@@ -57,12 +49,12 @@ export default function LoadingState({
         ms: 1100,
       },
     ],
-    [isUrl, subject],
+    [subject],
   );
 
   const match = useMemo(
-    () => simulateRegisterLookup({ subject, industry, area, isUrl }),
-    [subject, industry, area, isUrl],
+    () => simulateRegisterLookup({ subject, area }),
+    [subject, area],
   );
 
   const [done, setDone] = useState(0);
@@ -86,11 +78,7 @@ export default function LoadingState({
   return (
     <section className="df-fade-up rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 sm:p-8">
       <h2 className="font-heading text-h3-m font-bold text-ink">
-        {verified
-          ? mode === "url"
-            ? "Analysing your branding"
-            : "Designing your homepage"
-          : "Verifying your business"}
+        {verified ? "Analysing your branding" : "Verifying your business"}
       </h2>
 
       {/* ---------------- Verification ---------------- */}
@@ -166,12 +154,6 @@ export default function LoadingState({
                 <dd>{match.area}</dd>
               </div>
             )}
-            {match.industry && (
-              <div className="flex gap-1.5">
-                <dt className="font-semibold text-ink">Sector</dt>
-                <dd>{match.industry}</dd>
-              </div>
-            )}
           </dl>
 
           {SIMULATED_LOOKUP && (
@@ -187,7 +169,7 @@ export default function LoadingState({
       {/* ---------------- Generation ---------------- */}
       {verified && (
         <ul className="df-fade-up mt-5 flex flex-col gap-3 border-t border-gray-100 pt-5">
-          {GENERATION_STEPS[mode].map((step) => (
+          {GENERATION_STEPS.map((step) => (
             <li key={step} className="flex items-center gap-3 text-sm text-ink-soft">
               <span
                 aria-hidden="true"

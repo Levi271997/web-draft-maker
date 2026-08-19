@@ -1,6 +1,5 @@
 import OpenAI from "openai";
-import type { ScrapedBrand } from "./scrape";
-import { briefToPrompt, type Brief } from "./brief";
+import type { ScrapedBrand, ScrapedImage } from "./scrape";
 import { factsToPrompt, parseFacts, type Facts } from "./facts";
 import { goalsToPrompt, parseGoals } from "./goals";
 import {
@@ -52,7 +51,7 @@ const IMAGE_TREATMENTS = [
 ];
 
 const TREATMENT_NOTES: Record<string, string> = {
-  "full-bleed-image": "edge-to-edge photograph with a brand-gradient overlay and text sitting on top",
+  "full-bleed-image": "edge-to-edge photograph with a brand-gradient overlay and text sitting on top — because text sits on it, this one must use a stock photo, never a client image",
   "dark-band": "full-width band in --primary-dark or --primary, light text, breaking the page rhythm",
   "split-image-left": "asymmetric two-column, photo on the left at roughly 7/5 — not a plain 50/50",
   "split-image-right": "asymmetric two-column, photo on the right at roughly 5/7",
@@ -171,14 +170,13 @@ const identitySchema = (sectionIds: string[]) => ({
 
 const IDENTITY_SYSTEM = `You are a senior brand and conversion designer.
 
-You are given either (a) branding signals scraped from a client's existing website, or (b) a short brief from a client who has no website yet. Decide the brand identity and fill out the homepage they asked for.
+You are given branding signals scraped from a client's existing website. Decide the brand identity and fill out the homepage they asked for.
 
 The client has already chosen which sections the page contains, and that choice is fixed. What is still yours: what each section is called, the job it does on this particular page, and how it is laid out. A restaurant, a law firm and a SaaS product picking the same blocks must still produce visibly different pages — the difference lives in the titles, the intent and the treatments, not in the block list.
 
 Rules:
 - Ground every choice in the evidence. When a site was scraped, reuse its own colors and typefaces where they work.
 - A scraped color list is ranked by prominence but noisy: it includes framework defaults and greys. Pick the hexes that read as genuine brand colors.
-- With no existing site, design the identity from scratch to suit the stated industry, audience and style. If the client named a colour, build around it.
 - "accent" is for small highlights and should differ from "primary", which carries buttons.
 - Strong contrast between "text" and "background". Never light-on-light or dark-on-dark.
 - All colors: 6-digit lowercase hex with a leading #.
@@ -186,13 +184,84 @@ Rules:
 - Write in the brand's own language. If the site is not in English, work in the site's language.
 - Be concrete. No "Lorem ipsum", no "Your Company".`;
 
+/**
+ * The client's own photographs, offered to the page pass ahead of stock.
+ *
+ * Deliberately not mandatory: a scrape can surface a picture that is technically
+ * a photograph and useless on a homepage. Telling the model to prefer them and
+ * skip the poor ones beats forcing all ten onto the page.
+ */
+function photographyBlock(images: ScrapedImage[]): string {
+  if (images.length === 0) return "";
+
+  // Social cards and files named hero/banner/cover are usually composed
+  // graphics with the headline, logo and buttons rendered into the pixels.
+  // Laying fresh text over one produces two overlapping headlines.
+  const composed = (image: ScrapedImage) =>
+    image.source === "og" ||
+    /(^|[-_/])(og|share|social|banner|hero|cover|featured|fi-|slide)/i.test(
+      image.url.split("?")[0],
+    );
+
+  const lines = images.map((image, index) => {
+    const alt = image.alt ? ` — the site describes it as "${image.alt}"` : "";
+    const warning = composed(image)
+      ? "  [LIKELY HAS TEXT BAKED IN — never place headings or buttons over this one]"
+      : "";
+    return `${index + 1}. ${image.url}${alt}${warning}`;
+  });
+
+  // A soft "prefer these" lost every time to the very prescriptive picsum rules
+  // below it, and pages came back with one real photo and six stock ones. It is
+  // a quota now, stated as a count the model can check itself against.
+  const required = Math.min(images.length, 4);
+
+  return [
+    "=== THE CLIENT'S OWN PHOTOGRAPHS — USE THESE, NOT STOCK ===",
+    `These ${images.length} images are from the client's current website and are already verified as loading.`,
+    "They are the single biggest reason this page will look like THEIR business rather than a template.",
+    "",
+    ...lines,
+    "",
+    `MANDATORY: at least ${required} of the above must appear on the page you write.`,
+    "",
+    "=== WHERE THEY GO — THIS MATTERS MORE THAN ANYTHING ELSE HERE ===",
+    "These came off a live marketing site, so many of them ALREADY CONTAIN TEXT:",
+    "a headline, a tagline, a logo, even buttons, rendered into the image itself.",
+    "You cannot see them, so you must assume it.",
+    "",
+    "Therefore: NEVER write a heading, paragraph or button on top of a client image.",
+    "Doing so stacks your headline on theirs and the hero becomes unreadable.",
+    "",
+    "Put them only where nothing is written over them:",
+    "- one side of a split layout, with all the text in the other column",
+    "- inside cards in a grid, above or below the card's own text",
+    "- tiles in a gallery or mosaic",
+    "- portraits for people",
+    "",
+    "If a section needs a full-bleed photograph WITH text over it, use picsum.photos",
+    "for that section — stock is guaranteed to be textless. This is the one case",
+    "where stock beats the client's own imagery, and it does not count against the",
+    `${required}-image minimum.`,
+    "",
+    "Rules for these:",
+    "- Reference each URL exactly as given. Never alter, resize, crop or proxy it.",
+    "- Their aspect ratios are unknown, so always place them in a container with a fixed height or aspect-ratio and set object-fit: cover.",
+    "- Each one may be used once. Do not repeat an image to pad the page.",
+    "- Write alt text describing what the picture shows in its new context.",
+    "",
+  ].join("\n");
+}
+
 function pageSystemPrompt(
   id: Identity,
   sectionIds: string[],
   logo?: string | null,
   context?: string,
+  images: ScrapedImage[] = [],
 ): string {
   const { palette, typography, brand, nav } = id;
+  const photography = photographyBlock(images);
 
   const chrome = sectionIds
     .map(getSection)
@@ -228,12 +297,14 @@ NAVIGATION: ${nav.items.join(", ")} — with a "${nav.ctaLabel}" button.
 === LOGO ===
 ${
   logo
-    ? `Their existing logo is at ${logo} — use it as an <img> in the header and again, larger, in the hero. Give it an explicit height, width:auto and alt="${brand.name}". If it would sit on a dark band, put it on a light chip rather than letting it disappear.`
+    ? `Their existing logo is at ${logo} — use it as an <img> in the header and again, larger, in the hero. Give it an explicit height, width:auto and alt="${brand.name}".
+If it would sit on a dark band, put it on a light chip — but size the chip to the image with inline-block and padding, never a fixed box, or a logo that fails to load leaves a blank white rectangle.
+Give it onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${brand.name}',className:'wordmark'}))" and style .wordmark as the brand name in the heading face, so a broken logo degrades to a wordmark rather than a hole.`
     : `There is no logo file. Draw a wordmark for "${brand.name}" as inline SVG — the name set in the heading typeface with one small geometric mark beside it, built from --primary and --accent. Use the same wordmark in the header, the hero and the footer; never a placeholder box.`
 }
 
 === PHOTOGRAPHY (important — the page must not be image-free) ===
-Use real photographs from picsum.photos. The exact format:
+${photography}For any image slot the list above did not fill, use picsum.photos. The exact format:
   https://picsum.photos/seed/WORD/WIDTH/HEIGHT
 Rules:
 - Use a DIFFERENT seed word per image (e.g. /seed/harbour/, /seed/atelier/) so no two repeat.
@@ -245,6 +316,8 @@ Rules:
 - Use 4-8 photographs across the page: a hero image, a gallery or case-study grid, portraits for any people, and at least one full-bleed band.
 - Every <img> needs meaningful alt text.
 Inline SVG (that you write) is still the right choice for icons, logos and decorative shapes.
+- Give every <img> that points at the client's own site an onerror fallback to a picsum URL, so a blocked or moved file leaves a photograph rather than a hole:
+  onerror="this.onerror=null;this.src='https://picsum.photos/seed/WORD/800/600'"
 
 === INTERACTIVITY (JavaScript DOES run — the page must feel alive) ===
 Put all script in ONE <script> tag just before </body>. Vanilla JavaScript only — no React, no jQuery, no CDN imports; external scripts will not load.
@@ -336,16 +409,7 @@ ${id.outline
 Return only the HTML document.`;
 }
 
-export type BrandSource =
-  | { kind: "url"; brand: ScrapedBrand }
-  | { kind: "brief"; brief: Brief; extraCopy?: string };
-
-function buildUserPrompt(source: BrandSource): string {
-  if (source.kind === "brief") {
-    return briefToPrompt(source.brief, source.extraCopy);
-  }
-
-  const b = source.brand;
+function buildUserPrompt(b: ScrapedBrand): string {
   const lines: string[] = [
     `Website: ${b.finalUrl}`,
     b.siteName ? `Site name: ${b.siteName}` : "",
@@ -356,16 +420,40 @@ function buildUserPrompt(source: BrandSource): string {
     `Typefaces found: ${b.fonts.length ? b.fonts.join(", ") : "none detected"}`,
     "",
     b.navLabels.length ? `Navigation: ${b.navLabels.join(" | ")}` : "",
-    b.headings.length ? `Headings:\n- ${b.headings.join("\n- ")}` : "",
     b.buttonLabels.length ? `Existing CTAs: ${b.buttonLabels.join(" | ")}` : "",
+    b.contact.socials.length ? `Social profiles: ${b.contact.socials.join(" | ")}` : "",
     "",
-    "Visible page copy (truncated):",
-    b.bodyText || "(no readable copy found)",
+    "=== THEIR CURRENT COPY — THIS IS THE SOURCE MATERIAL, NOT BACKGROUND READING ===",
+    "Structure preserved: ## marks a heading, - a list item, > a quotation.",
+    "",
+    "Everything real on the new page comes from here: their service names, their",
+    "prices, their customers' words, their claims, the towns they cover, the",
+    "brands they carry. Reuse it. Rewrite it to read better, sharpen it, cut what",
+    "repeats — but do not replace their specifics with generic equivalents, and do",
+    "not add specifics that are not in here.",
+    "",
+    b.contentOutline || b.bodyText || "(no readable copy found)",
     "",
     "Use `improvements` for 4-6 specific fixes to their CURRENT homepage.",
   ];
 
   return lines.filter(Boolean).join("\n");
+}
+
+/**
+ * Their own site is a source of verified facts, so a client who skipped the
+ * details form still gets their real phone number on the page rather than none.
+ * Anything typed into the form wins — it is more current than a scrape.
+ */
+function mergeFacts(supplied: Facts, brand: ScrapedBrand): Facts {
+  const { phones, emails, address } = brand.contact;
+
+  return {
+    ...supplied,
+    phone: supplied.phone || phones[0] || "",
+    email: supplied.email || emails[0] || "",
+    area: supplied.area || address || "",
+  };
 }
 
 const HEX_RE = /^#[0-9a-f]{6}$/;
@@ -574,54 +662,172 @@ export type GenerateOptions = {
   facts?: Facts;
 };
 
-function client() {
-  const apiKey = process.env.OPENAI_API_KEY;
+/**
+ * Which service actually gets called.
+ *
+ * DeepSeek serves an OpenAI-compatible API, so the same SDK reaches it with a
+ * different baseURL. What differs is what it will accept:
+ *
+ * - Strict `json_schema` structured output is an OpenAI feature. On DeepSeek the
+ *   identity pass drops to plain JSON mode and sends the schema as text. That is
+ *   survivable here because the reply is normalised afterwards anyway —
+ *   sanitizePalette, alignOutline and spreadTreatments repair a loose response —
+ *   so the schema is a guardrail rather than load-bearing.
+ * - Measured, not assumed: deepseek-chat accepts max_tokens well past 16k and
+ *   returns a complete document. An earlier 8k default truncated every page,
+ *   which the </html> check caught as "came back incomplete".
+ * - It wants `max_tokens`, not OpenAI's newer `max_completion_tokens`.
+ */
+type Provider = {
+  id: "openai" | "deepseek";
+  label: string;
+  keyName: string;
+  apiKey: string;
+  baseURL?: string;
+  model: string;
+  /** Whether response_format supports a strict json_schema. */
+  strictJson: boolean;
+  /** Budget for the page pass. Polish is the first thing cut when this is tight. */
+  maxOutputTokens: number;
+};
 
-  if (!apiKey || apiKey.startsWith("sk-your") || apiKey === "REPLACE_ME") {
+const PLACEHOLDER_KEY = /^(sk-your|your-|replace_me)/i;
+
+function usableKey(key: string): boolean {
+  return key.length > 0 && !PLACEHOLDER_KEY.test(key);
+}
+
+function positiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+/**
+ * LLM_PROVIDER decides explicitly. With it unset, a DeepSeek key on its own is
+ * taken as intent, so adding one key to .env is enough to switch.
+ */
+export function resolveProvider(): Provider {
+  const openaiKey = (process.env.OPENAI_API_KEY ?? "").trim();
+  const deepseekKey = (process.env.DEEPSEEK_API_KEY ?? "").trim();
+  const requested = (process.env.LLM_PROVIDER ?? "").trim().toLowerCase();
+
+  const wantsDeepseek =
+    requested === "deepseek" ||
+    (requested === "" && !usableKey(openaiKey) && usableKey(deepseekKey));
+
+  if (wantsDeepseek) {
+    if (!usableKey(deepseekKey)) {
+      throw new Error(
+        "DEEPSEEK_API_KEY is not set. Add your key to the .env file in the project root, then restart the dev server.",
+      );
+    }
+
+    return {
+      id: "deepseek",
+      label: "DeepSeek",
+      keyName: "DEEPSEEK_API_KEY",
+      apiKey: deepseekKey,
+      baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
+      model: process.env.LLM_MODEL || "deepseek-chat",
+      // Opt-in: set LLM_STRICT_JSON=true once DeepSeek accepts json_schema.
+      strictJson: process.env.LLM_STRICT_JSON === "true",
+      maxOutputTokens: positiveInt(process.env.LLM_MAX_OUTPUT_TOKENS, 16_000),
+    };
+  }
+
+  if (!usableKey(openaiKey)) {
     throw new Error(
-      "OPENAI_API_KEY is not set. Add your key to the .env file in the project root, then restart the dev server.",
+      "No model API key is set. Add OPENAI_API_KEY to the .env file in the project root — or DEEPSEEK_API_KEY to use DeepSeek instead — then restart the dev server.",
     );
   }
 
-  return new OpenAI({ apiKey, timeout: 180_000, maxRetries: 2 });
+  return {
+    id: "openai",
+    label: "OpenAI",
+    keyName: "OPENAI_API_KEY",
+    apiKey: openaiKey,
+    model: process.env.LLM_MODEL || process.env.OPENAI_MODEL || "gpt-4o",
+    strictJson: process.env.LLM_STRICT_JSON !== "false",
+    maxOutputTokens: positiveInt(process.env.LLM_MAX_OUTPUT_TOKENS, 16_000),
+  };
 }
 
-function friendlyError(err: unknown, model: string): Error {
+function client(provider: Provider) {
+  return new OpenAI({
+    apiKey: provider.apiKey,
+    baseURL: provider.baseURL,
+    timeout: 180_000,
+    maxRetries: 2,
+  });
+}
+
+function friendlyError(err: unknown, provider: Provider): Error {
   const e = err as { status?: number; message?: string };
-  if (e.status === 401) return new Error("OpenAI rejected the API key. Check OPENAI_API_KEY in .env.");
-  if (e.status === 429) return new Error("OpenAI rate limit or quota reached. Check your plan and billing.");
-  if (e.status === 404) {
-    return new Error(`The model "${model}" isn't available to this key. Set OPENAI_MODEL in .env to one you have access to.`);
+
+  if (e.status === 401) {
+    return new Error(`${provider.label} rejected the API key. Check ${provider.keyName} in .env.`);
   }
-  return new Error(e.message || "The OpenAI request failed.");
+  if (e.status === 402) {
+    return new Error(`${provider.label} reports an insufficient balance. Top the account up and try again.`);
+  }
+  if (e.status === 429) {
+    return new Error(`${provider.label} rate limit or quota reached. Check your plan and billing.`);
+  }
+  if (e.status === 404) {
+    return new Error(`The model "${provider.model}" isn't available to this key. Set LLM_MODEL in .env to one you have access to.`);
+  }
+  return new Error(e.message || `The ${provider.label} request failed.`);
 }
 
 export async function generateHomepage(
-  source: BrandSource,
+  brand: ScrapedBrand,
   options: GenerateOptions = {},
 ): Promise<Recommendation> {
   const { refinement, avoidPrimary } = options;
-  const openai = client();
-  const model = process.env.OPENAI_MODEL || "gpt-4o";
-  const basePrompt = buildUserPrompt(source);
+  const provider = resolveProvider();
+  const openai = client(provider);
+  const model = provider.model;
+  const basePrompt = buildUserPrompt(brand);
 
   // Re-parsed rather than trusted: this also normalises the order and forces
   // the required sections in, so the schema enum and the outline always agree.
   const sections = parseSections(options.sections);
   const sectionIds = outlineSections(sections).map((s) => s.id);
-  const logo = source.kind === "url" ? source.brand.logo : null;
+  const { logo, images } = brand;
 
   // Shared across both routes in: what they want the page to do, and the facts
   // it is allowed to state. Both passes need these — the identity pass to
   // weight the outline, the page pass to write without inventing.
-  const context = [goalsToPrompt(parseGoals(options.goals)), factsToPrompt(parseFacts(options.facts))]
+  const context = [
+    goalsToPrompt(parseGoals(options.goals)),
+    factsToPrompt(mergeFacts(parseFacts(options.facts), brand)),
+  ]
     .filter(Boolean)
     .join("\n\n");
 
   /* ---------------- Pass 1: identity + outline ---------------- */
 
+  const schema = identitySchema(sectionIds);
+
+  // Without strict schema support the shape has to be asked for in words. The
+  // literal "json" in there is also what puts json_object mode into effect.
+  const schemaInstruction = provider.strictJson
+    ? ""
+    : [
+        "Reply with a single json object and nothing else — no prose, no markdown fence.",
+        "It must match this JSON Schema exactly: every required key present, no extra keys, enum values copied verbatim.",
+        JSON.stringify(schema),
+      ].join("\n");
+
   async function identityOnce(extra?: string): Promise<Identity> {
-    const userPrompt = [basePrompt, context, sectionsToPrompt(sections), refinement, extra]
+    const userPrompt = [
+      basePrompt,
+      context,
+      sectionsToPrompt(sections),
+      refinement,
+      extra,
+      schemaInstruction,
+    ]
       .filter(Boolean)
       .join("\n\n");
 
@@ -634,17 +840,15 @@ export async function generateHomepage(
           { role: "system", content: IDENTITY_SYSTEM },
           { role: "user", content: userPrompt },
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "brand_identity",
-            strict: true,
-            schema: identitySchema(sectionIds),
-          },
-        },
+        response_format: provider.strictJson
+          ? {
+              type: "json_schema",
+              json_schema: { name: "brand_identity", strict: true, schema },
+            }
+          : { type: "json_object" },
       });
     } catch (err) {
-      throw friendlyError(err, model);
+      throw friendlyError(err, provider);
     }
 
     const choice = completion.choices[0];
@@ -698,9 +902,12 @@ export async function generateHomepage(
       model,
       temperature: 0.85,
       // Polish lives in the details that get cut first when the budget is tight.
-      max_completion_tokens: 16_000,
+      // DeepSeek doesn't know max_completion_tokens; it wants the older name.
+      ...(provider.id === "deepseek"
+        ? { max_tokens: provider.maxOutputTokens }
+        : { max_completion_tokens: provider.maxOutputTokens }),
       messages: [
-        { role: "system", content: pageSystemPrompt(identity, sections, logo, context) },
+        { role: "system", content: pageSystemPrompt(identity, sections, logo, context, images) },
         {
           role: "user",
           content: [
@@ -715,7 +922,7 @@ export async function generateHomepage(
       ],
     });
   } catch (err) {
-    throw friendlyError(err, model);
+    throw friendlyError(err, provider);
   }
 
   const pageChoice = pageCompletion.choices[0];

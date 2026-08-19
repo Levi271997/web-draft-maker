@@ -53,13 +53,7 @@ export type Recommendation = Identity & {
   html: string;
 };
 
-/** Which path the user took. */
-export type GenerateMode = "url" | "brief";
-
-/**
- * What we knew going in. For the brief path there is nothing to detect, so
- * `finalUrl` is empty and the colour/font arrays are empty.
- */
+/** What the scrape found before generation started. */
 export type BrandSummary = {
   finalUrl: string;
   siteName: string | null;
@@ -70,7 +64,6 @@ export type BrandSummary = {
 };
 
 export type GenerateResponse = {
-  mode: GenerateMode;
   brand: BrandSummary;
   recommendation: Recommendation;
 };

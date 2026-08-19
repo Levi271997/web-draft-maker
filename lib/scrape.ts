@@ -17,6 +17,41 @@ export type ScrapedBrand = {
   buttonLabels: string[];
   navLabels: string[];
   bodyText: string;
+  /** The page's prose with its structure kept — headings, bullets, quotes. */
+  contentOutline: string;
+  contact: ScrapedContact;
+  images: ScrapedImage[];
+};
+
+/**
+ * The details a homepage states as fact.
+ *
+ * Worth pulling separately from the prose: the factual-discipline rules forbid
+ * inventing a phone number, so without this a client who skips the details form
+ * gets a page with no way to contact them — while their real number was sitting
+ * in the footer of the site we just read.
+ */
+export type ScrapedContact = {
+  phones: string[];
+  emails: string[];
+  address: string | null;
+  socials: string[];
+};
+
+/**
+ * A photograph lifted from the client's existing site.
+ *
+ * Reusing their own pictures is the single biggest thing that stops a draft
+ * reading as a template — it becomes recognisably *their* business rather than
+ * a nice layout with stock photos in it.
+ */
+export type ScrapedImage = {
+  url: string;
+  /** The site's own alt text, which says what the picture actually shows. */
+  alt: string;
+  source: "og" | "img" | "css";
+  /** From the HEAD check. Best available proxy for "is this a real photo". */
+  bytes: number | null;
 };
 
 const UA =
@@ -267,6 +302,234 @@ function extractLogo(html: string, base: string): string | null {
   return null;
 }
 
+/**
+ * The web is full of things that look like photographs to a naive reader —
+ * sprite sheets, spacer GIFs, tracking pixels, UI chrome. Filenames catch most
+ * of them; the HEAD check in verifyImages catches the rest.
+ */
+const IMAGE_NOISE =
+  /(sprite|icon|favicon|logo|pixel|spacer|blank|placeholder|avatar|badge|flag|arrow|bullet|loader|spinner|1x1|transparent|wordmark)/i;
+
+const IMAGE_EXT = /\.(jpe?g|png|webp|avif)(\?|#|$)/i;
+
+const IMAGE_HEAD_TIMEOUT_MS = 5_000;
+const MAX_IMAGE_CANDIDATES = 24;
+const MAX_IMAGES = 10;
+const MIN_IMAGE_BYTES = 8_000;
+
+/** srcset="small.jpg 400w, big.jpg 1600w" — take the widest candidate. */
+function widestFromSrcset(value: string): string | null {
+  let best: { url: string; width: number } | null = null;
+
+  for (const part of value.split(",")) {
+    const [url, descriptor] = part.trim().split(/\s+/);
+    if (!url) continue;
+    const width = Number((descriptor ?? "").replace(/[wx]$/i, "")) || 0;
+    if (!best || width > best.width) best = { url, width };
+  }
+
+  return best?.url ?? null;
+}
+
+function extractImages(html: string, css: string, base: string): ScrapedImage[] {
+  const found = new Map<string, ScrapedImage>();
+
+  const add = (raw: string | null, alt: string, source: ScrapedImage["source"]) => {
+    if (!raw || raw.startsWith("data:")) return;
+
+    const url = resolve(raw.trim(), base);
+    if (!url) return;
+
+    // Key on the path so the same photo at three query strings counts once.
+    const path = url.split("?")[0];
+    if (IMAGE_NOISE.test(path) || !IMAGE_EXT.test(path) || found.has(path)) return;
+    // Some CMSes give a partner logo a neutral filename, and only the alt says so.
+    if (alt && IMAGE_NOISE.test(alt)) return;
+
+    found.set(path, { url, alt: alt.slice(0, 120), source, bytes: null });
+  };
+
+  // Social preview images are picked by the owner, so they tend to be the best
+  // single photograph the site has.
+  for (const key of ["og:image", "twitter:image"]) {
+    const value = meta(html, key);
+    if (value) add(value, "", "og");
+  }
+
+  for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
+    const declaredWidth = Number(attr(tag, "width") ?? 0);
+    if (declaredWidth && declaredWidth < 200) continue;
+
+    const srcset = attr(tag, "srcset") ?? attr(tag, "data-srcset");
+
+    add(
+      (srcset ? widestFromSrcset(srcset) : null) ??
+        attr(tag, "src") ??
+        attr(tag, "data-src") ??
+        attr(tag, "data-lazy-src"),
+      decodeEntities(attr(tag, "alt") ?? ""),
+      "img",
+    );
+  }
+
+  // Hero imagery is very often a CSS background rather than an <img>.
+  for (const m of `${html}\n${css}`.matchAll(
+    /background(?:-image)?\s*:[^;}]*url\(\s*['"]?([^'")]+)/gi,
+  )) {
+    add(m[1], "", "css");
+  }
+
+  return [...found.values()];
+}
+
+/**
+ * Confirms each candidate is a real, reachable image before it reaches the
+ * prompt. Without this the page pass cheerfully references 404s, and a draft
+ * full of broken images is worse than one full of stock photos.
+ */
+async function verifyImages(candidates: ScrapedImage[]): Promise<ScrapedImage[]> {
+  const settled = await Promise.allSettled(
+    candidates.slice(0, MAX_IMAGE_CANDIDATES).map(async (image) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), IMAGE_HEAD_TIMEOUT_MS);
+
+      try {
+        const res = await fetch(image.url, {
+          method: "HEAD",
+          redirect: "follow",
+          signal: controller.signal,
+          headers: { "user-agent": UA },
+        });
+
+        if (!res.ok) return null;
+        if (!(res.headers.get("content-type") ?? "").toLowerCase().startsWith("image/")) {
+          return null;
+        }
+
+        const bytes = Number(res.headers.get("content-length")) || null;
+        // Anything this small is chrome wearing a photograph's filename.
+        if (bytes !== null && bytes < MIN_IMAGE_BYTES) return null;
+
+        return { ...image, bytes };
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
+
+  const usable = settled
+    .map((result) => (result.status === "fulfilled" ? result.value : null))
+    .filter((image): image is ScrapedImage => image !== null);
+
+  // Owner-chosen first, then largest. File size is the best proxy for "this is
+  // a photograph" that doesn't require downloading the thing.
+  usable.sort((a, b) => {
+    if (a.source !== b.source) {
+      if (a.source === "og") return -1;
+      if (b.source === "og") return 1;
+    }
+    return (b.bytes ?? 0) - (a.bytes ?? 0);
+  });
+
+  return usable.slice(0, MAX_IMAGES);
+}
+
+const SOCIAL_HOSTS =
+  /(facebook|instagram|linkedin|twitter|x\.com|youtube|tiktok|pinterest)\.[a-z.]+/i;
+
+function extractContact(html: string, base: string): ScrapedContact {
+  const phones = new Set<string>();
+  const emails = new Set<string>();
+  const socials = new Set<string>();
+
+  for (const tag of html.match(/<a\b[^>]*>/gi) ?? []) {
+    const href = attr(tag, "href");
+    if (!href) continue;
+
+    if (/^tel:/i.test(href)) {
+      // Keep the punctuation the site chose — it is how they write their number.
+      const value = decodeEntities(href.slice(4)).trim();
+      if (value.replace(/\D/g, "").length >= 6) phones.add(value);
+      continue;
+    }
+
+    if (/^mailto:/i.test(href)) {
+      const value = decodeEntities(href.slice(7)).split("?")[0].trim().toLowerCase();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) emails.add(value);
+      continue;
+    }
+
+    if (SOCIAL_HOSTS.test(href)) {
+      const absolute = resolve(href, base);
+      // Drop share/intent links — they point back at this page, not a profile.
+      if (absolute && !/\/(sharer|share|intent)\b/i.test(absolute)) socials.add(absolute);
+    }
+  }
+
+  const addressBlock = html.match(/<address\b[^>]*>([\s\S]*?)<\/address>/i);
+  const address = addressBlock
+    ? stripTags(addressBlock[1]).replace(/\s+/g, " ").trim().slice(0, 200) || null
+    : null;
+
+  return {
+    phones: [...phones].slice(0, 3),
+    emails: [...emails].slice(0, 3),
+    address,
+    socials: [...socials].slice(0, 6),
+  };
+}
+
+/**
+ * The page's copy with its shape intact.
+ *
+ * A flat text dump loses what a heading was and which bullets belonged under
+ * it, which is exactly the structure worth reusing. This keeps headings,
+ * bullets and pull-quotes as markers for the same token budget.
+ */
+function extractContentOutline(html: string, navLabels: string[], limit = 7000): string {
+  // Menus are not always inside <nav>; drop anything already captured as a label.
+  const navSet = new Set(navLabels.map((l) => l.toLowerCase()));
+  const body = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+    // Nav labels are captured separately and would repeat on every heading pass.
+    .replace(/<nav\b[\s\S]*?<\/nav>/gi, " ");
+
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  let length = 0;
+
+  // One pass in document order, so headings keep the content that follows them.
+  for (const m of body.matchAll(/<(h[1-4]|p|li|blockquote|dd|dt)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
+    const tag = m[1].toLowerCase();
+    const text = stripTags(m[2]).replace(/\s+/g, " ").trim();
+
+    if (text.length < 2 || text.length > 600) continue;
+    if (tag === "li" && navSet.has(text.toLowerCase())) continue;
+    // Nested markup means the same string can match twice at different depths.
+    if (seen.has(text)) continue;
+    seen.add(text);
+
+    const line = tag.startsWith("h")
+      ? `\n## ${text}`
+      : tag === "li"
+        ? `- ${text}`
+        : tag === "blockquote"
+          ? `> ${text}`
+          : text;
+
+    length += line.length + 1;
+    if (length > limit) break;
+    lines.push(line);
+  }
+
+  return lines.join("\n").trim();
+}
+
 export async function scrapeBrand(inputUrl: string): Promise<ScrapedBrand> {
   const url = normalizeUrl(inputUrl);
 
@@ -363,5 +626,8 @@ export async function scrapeBrand(inputUrl: string): Promise<ScrapedBrand> {
     buttonLabels: [...new Set(buttonLabels)].slice(0, 8),
     navLabels,
     bodyText: stripTags(bodyOnly).slice(0, 4000),
+    contentOutline: extractContentOutline(html, navLabels),
+    contact: extractContact(html, base),
+    images: await verifyImages(extractImages(html, css, base)),
   };
 }

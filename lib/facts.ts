@@ -102,7 +102,7 @@ export function factsToPrompt(facts: Facts): string {
   return [
     supplied.length
       ? [
-          "CLIENT-SUPPLIED FACTS — verified, and the only facts of this kind you have.",
+          "VERIFIED FACTS — given by the client, or read from their current website. The only facts of this kind you have.",
           "Use them verbatim. Never reformat a phone number, never adjust an address, never round a figure.",
           "",
           ...supplied,

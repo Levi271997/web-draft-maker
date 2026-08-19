@@ -1,7 +1,6 @@
-import type { BrandSummary, GenerateMode, Recommendation } from "@/lib/types";
+import type { BrandSummary, Recommendation } from "@/lib/types";
 
 type Props = {
-  mode: GenerateMode;
   brand: BrandSummary;
   recommendation: Recommendation;
 };
@@ -16,9 +15,9 @@ const PALETTE_ROLES = [
   { key: "textMuted", label: "Muted text" },
 ] as const;
 
-export default function BrandReadout({ mode, brand, recommendation }: Props) {
+export default function BrandReadout({ brand, recommendation }: Props) {
   const { palette, typography } = recommendation;
-  const fromUrl = mode === "url";
+  const fromUrl = true;
 
   let host = brand.finalUrl;
   try {

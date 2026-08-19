@@ -11,7 +11,6 @@
  */
 
 export type LeadContext = {
-  mode: string;
   brandName: string;
   /** How many designs they generated before asking to talk. */
   versionCount: number;
@@ -52,7 +51,7 @@ function cleanList(value: unknown, max: number): string[] {
     .slice(0, max);
 }
 
-/** Throws with a user-facing message. Same contract as parseBrief. */
+/** Throws with a user-facing message the form can show as-is. */
 export function parseLead(input: unknown): Lead {
   const raw = (input ?? {}) as Record<string, unknown>;
   const context = (raw.context ?? {}) as Record<string, unknown>;
@@ -63,7 +62,6 @@ export function parseLead(input: unknown): Lead {
     notes: clean(raw.notes, LIMITS.notes),
     consent: raw.consent === true,
     context: {
-      mode: context.mode === "brief" ? "brief" : "url",
       brandName: clean(context.brandName, LIMITS.brand),
       versionCount:
         typeof context.versionCount === "number" && Number.isFinite(context.versionCount)

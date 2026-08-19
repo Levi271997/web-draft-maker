@@ -37,7 +37,6 @@ export type RegisterMatch = {
   employees: string;
   /** Only set when the client told us — never invented. */
   area: string;
-  industry: string;
 };
 
 /** FNV-1a. Small, dependency-free, and stable across renders. */
@@ -76,11 +75,8 @@ const EMPLOYEE_BANDS = ["1–4", "5–9", "10–19", "20–49"];
 
 export function simulateRegisterLookup(input: {
   subject: string;
-  /** From the brief's business type. Empty on the URL path. */
-  industry?: string;
   /** From the details panel. Left empty rather than invented. */
   area?: string;
-  isUrl: boolean;
 }): RegisterMatch {
   const subject = input.subject.trim();
   const seed = hash(subject.toLowerCase() || "unknown");
@@ -89,7 +85,7 @@ export function simulateRegisterLookup(input: {
   const base = String(800_000_000 + (seed % 199_999_999));
   const orgNumber = `${base.slice(0, 3)} ${base.slice(3, 6)} ${base.slice(6, 9)}`;
 
-  const name = input.isUrl ? nameFromUrl(subject) : subject;
+  const name = nameFromUrl(subject);
 
   return {
     name: orgForm === "ENK" ? name : `${name} ${orgForm}`,
@@ -98,6 +94,5 @@ export function simulateRegisterLookup(input: {
     registered: String(1996 + ((seed >>> 7) % 26)),
     employees: pick(EMPLOYEE_BANDS, seed >>> 3),
     area: input.area?.trim() ?? "",
-    industry: input.industry?.trim() ?? "",
   };
 }

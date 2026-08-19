@@ -13,9 +13,9 @@ export default function Home() {
           </h1>
         </div>
         <p className="mt-3 max-w-prose text-base text-ink-soft">
-          Already have a site? We&apos;ll read its branding — colors, typefaces,
-          and voice — and rebuild the homepage around it. Starting from scratch?
-          Tell us about the business and we&apos;ll design one. No call required.
+          Give us your website and we&apos;ll read its branding — colors,
+          typefaces, voice and photography — then rebuild the homepage around
+          it. No call required.
         </p>
       </header>
 
