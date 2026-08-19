@@ -300,10 +300,18 @@ function pageSystemPrompt(
   logo?: string | null,
   context?: string,
   images: ScrapedImage[] = [],
+  headerCtas = 0,
 ): string {
   const { palette, typography, brand, nav } = id;
   const photography = photographyBlock(images);
   const assigned = assignImages(id.outline, images);
+
+  // Generated headers drift toward three or four buttons on a site that has
+  // one, and that alone makes the draft read as somebody else's design.
+  const headerCtaRule =
+    headerCtas > 0
+      ? `- Their existing header carries ${headerCtas} call-to-action button${headerCtas === 1 ? "" : "s"}. Use AT MOST that many. Fewer is fine; more is not.`
+      : "- Their existing header carries no call-to-action button at all. Use at most one, and keep it quiet.";
 
   const chrome = sectionIds
     .map(getSection)
@@ -348,10 +356,10 @@ NAVIGATION: ${nav.items.join(", ")} — with a "${nav.ctaLabel}" button.
 === LOGO ===
 ${
   logo
-    ? `Their existing logo is at ${logo} — use it as an <img> in the header and again, larger, in the hero. Give it an explicit height, width:auto and alt="${brand.name}".
+    ? `Their existing logo is at ${logo} — use it as an <img> in the header, and ONLY in the header. Not in the hero, not repeated anywhere else above the footer. Give it an explicit height, width:auto and alt="${brand.name}".
 If it would sit on a dark band, put it on a light chip — but size the chip to the image with inline-block and padding, never a fixed box, or a logo that fails to load leaves a blank white rectangle.
 Give it onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${brand.name}',className:'wordmark'}))" and style .wordmark as the brand name in the heading face, so a broken logo degrades to a wordmark rather than a hole.`
-    : `There is no logo file. Draw a wordmark for "${brand.name}" as inline SVG — the name set in the heading typeface with one small geometric mark beside it, built from --primary and --accent. Use the same wordmark in the header, the hero and the footer; never a placeholder box.`
+    : `There is no logo file. Draw a wordmark for "${brand.name}" as inline SVG — the name set in the heading typeface with one small geometric mark beside it, built from --primary and --accent. Use it in the header and the footer only, never in the hero, and never a placeholder box.`
 }
 
 === PHOTOGRAPHY (important — the page must not be image-free) ===
@@ -409,6 +417,85 @@ Accessibility: every control is a real <button>, reachable by keyboard, with ari
 - A consistent radius scale (e.g. 8px small, 16px cards, 28px feature panels).
 - Consider a subtle grain or mesh-gradient backdrop on one dark section.
 - Buttons: real presence — solid fill, adequate padding (0.9rem 1.6rem), clear hover and visible :focus-visible ring.
+
+=== THE HERO — READ THIS TWICE ===
+This band decides whether the page looks designed or assembled, and it is
+where generated pages go wrong most often. These are requirements.
+
+CONTAINER
+- The hero's CONTENT sits in the SAME max-width container as every other
+  section on the page, with the same horizontal padding. Define one container
+  class and use it everywhere, hero included.
+- Only the hero's BACKGROUND may be full-bleed. Its text never is.
+
+ALIGNMENT
+- Pick ONE of left-aligned or centred for the whole hero, and commit to it.
+- The headline and the supporting paragraph share that alignment. Never a
+  centred headline over a left-aligned paragraph, or the reverse.
+- No justified text, no right-aligned text, anywhere in the hero.
+
+NO LOGO IN THE HERO
+- The logo lives in the header. Do not place it, or a wordmark, or a logo
+  chip, in the hero. It pushes the headline down and duplicates the header
+  two centimetres below itself.
+
+CONTRAST — the hero must never be a guess
+You cannot see the background you are choosing, so make it knowable:
+- With a PHOTOGRAPH behind the hero, you do not know if it is light or dark.
+  Therefore ALWAYS lay a scrim over the whole image — a solid or gradient
+  overlay in --primary-dark at 55% or more — and set all hero text to white.
+  Never text straight onto a photograph.
+- With a SOLID colour behind the hero, use --primary-dark or --bg. On
+  --primary-dark all text is white; on --bg all text is --text.
+- If you use --primary as a hero background, its text colour is --on-primary,
+  which has already been measured for you. Do not assume white.
+
+=== THE HEADER ===
+The header sits OVER the hero, so its colour follows the hero's background, not
+the page's. This is the single most common way a generated page breaks: a
+transparent header with --text links over a dark hero is an invisible menu.
+
+Over a DARK hero (any scrimmed photograph, or --primary-dark) write exactly
+this shape — both states, not just the scrolled one:
+
+  .site-header { background: transparent; }
+  .site-header .nav-links a,
+  .site-header .logo { color: #fff; }
+  .site-header.scrolled { background: var(--bg); box-shadow: ...; }
+  .site-header.scrolled .nav-links a,
+  .site-header.scrolled .logo { color: var(--text); }
+
+Over a LIGHT hero (--bg) the links are var(--text) in both states.
+Never leave the unscrolled state inheriting a colour you did not set.
+${headerCtaRule}
+- The hamburger toggle under 900px is not a call to action and does not count
+  toward that limit.
+
+=== THE FOOTER ===
+Pick the footer's background deliberately, then colour everything inside it
+to match. A footer that inherits page text colours onto a dark band is the
+same failure as an invisible header, at the other end of the page.
+
+On a DARK footer (--primary-dark, or any dark brand colour):
+
+  footer { background: var(--primary-dark); color: #fff; }
+  footer a, footer h2, footer h3, footer strong { color: #fff; }
+  footer a:hover { opacity: .8; }
+  footer .muted, footer small { color: rgba(255,255,255,.72); }
+  footer svg { fill: currentColor; }
+
+On a LIGHT footer (--bg or --surface):
+
+  footer { background: var(--surface); color: var(--text); }
+  footer a, footer h2, footer h3 { color: var(--text); }
+  footer .muted, footer small { color: var(--text-muted); }
+
+This covers the logo too: a dark-ink logo on a dark footer disappears, so on
+a dark footer either use a white/knockout treatment or sit it on a light chip
+sized to the image. Social icons follow the same rule — they inherit
+currentColor rather than carrying their own fill.
+Never leave footer text, links or icons taking their colour from the page
+default when the footer background differs from the page background.
 
 === EVERY LINK MUST GO SOMEWHERE ===
 href="#" is forbidden. A button that does nothing is the most obvious flaw a
@@ -832,8 +919,31 @@ function sanitizeHtml(html: string): string {
  * is cheap because each fix is a pure string transform with a known-correct
  * answer.
  */
-function repairHtml(html: string, facts: Facts): string {
+function repairHtml(
+  html: string,
+  facts: Facts,
+  palette: Palette,
+  logo?: string | null,
+): string {
   let out = html;
+
+  /* The logo belongs in the header only. Repeating it in the hero pushes the
+     headline down and duplicates the header a few centimetres below itself. */
+  if (logo) {
+    const heroStart = out.search(/<section\b[^>]*(?:class|id)\s*=\s*["'][^"']*hero/i);
+
+    if (heroStart >= 0) {
+      const heroEnd = out.indexOf("</section>", heroStart);
+      if (heroEnd > heroStart) {
+        const hero = out.slice(heroStart, heroEnd);
+        const withoutLogo = hero.replace(
+          new RegExp(`<img\\b[^>]*${escapeForRegExp(logo)}[^>]*>`, "gi"),
+          "",
+        );
+        if (withoutLogo !== hero) out = out.slice(0, heroStart) + withoutLogo + out.slice(heroEnd);
+      }
+    }
+  }
 
   /* Dead links. A button that does nothing is the flaw clients spot first. */
   const ids = new Set([...out.matchAll(/\sid=["']([^"']+)["']/g)].map((m) => m[1]));
@@ -865,6 +975,79 @@ function repairHtml(html: string, facts: Facts): string {
     return tag.replace(/\s*\/?>$/, `${attrs}>`);
   });
 
+  /* The menu disappearing over a dark hero is the most common visual failure
+     left, and prompting alone did not close it. If the hero is demonstrably
+     dark — a photograph behind a scrim, or a dark brand colour — append an
+     override so the unscrolled header stays legible. Appended rules win. */
+  const heroRule = out.match(/\.hero\b[^{]*\{[^}]*\}/i)?.[0] ?? "";
+  const heroIsDark =
+    /url\(/i.test(heroRule) ||
+    /--primary-dark/i.test(heroRule) ||
+    /rgba?\(\s*\d{1,2}\s*,\s*\d{1,2}\s*,/.test(heroRule);
+
+  if (heroIsDark && /<\/style>/i.test(out)) {
+    out = out.replace(
+      /<\/style>/i,
+      [
+        "",
+        "/* legibility over a dark hero */",
+        "header:not(.scrolled) a, header:not(.scrolled) .logo,",
+        ".site-header:not(.scrolled) a, .site-header:not(.scrolled) .logo { color: #fff; }",
+        "header.scrolled a, .site-header.scrolled a { color: var(--text); }",
+        "</style>",
+      ].join("\n"),
+    );
+  }
+
+  /* Same failure as the header, at the other end of the page: a footer whose
+     background differs from the page's, with text still inheriting the page
+     colour. Resolve the footer's background — palette variable or literal —
+     measure it, and append an override. Appended rules win. */
+  // Take the first footer rule that actually sets a background — the first one
+  // mentioning "footer" is often a layout helper like .footer-grid.
+  let footerBg: string | undefined;
+  for (const rule of out.matchAll(/\bfooter\b[^{]*\{[^}]*\}/gi)) {
+    const found = rule[0].match(/background(?:-color)?\s*:\s*([^;}]+)/i)?.[1]?.trim();
+    if (found) {
+      footerBg = found;
+      break;
+    }
+  }
+
+  if (footerBg) {
+    const named: Record<string, string> = {
+      "--primary": palette.primary,
+      "--primary-dark": palette.primaryDark,
+      "--accent": palette.accent,
+      "--bg": palette.background,
+      "--surface": palette.surface,
+      "--text": palette.text,
+    };
+
+    const variable = footerBg.match(/var\(\s*(--[\w-]+)/)?.[1];
+    const literal = footerBg.match(/#[0-9a-f]{6}\b/i)?.[0];
+    const resolved = (variable && named[variable]) || literal || null;
+
+    if (resolved) {
+      const ink = readableOn(resolved);
+      const muted =
+        ink === "#ffffff" ? "rgba(255,255,255,.72)" : palette.textMuted;
+
+      out = out.replace(
+        /<\/style>/i,
+        () =>
+          [
+            "",
+            "/* legibility inside the footer */",
+            `footer, footer p, footer li, footer a, footer h2, footer h3, footer h4, footer strong { color: ${ink}; }`,
+            `footer small, footer .muted { color: ${muted}; }`,
+            "footer svg { fill: currentColor; }",
+            "</style>",
+          ].join("\n"),
+      );
+    }
+  }
+
   /* Screen readers and translation tools both need this. */
   if (!/<html[^>]*\slang=/i.test(out)) {
     out = out.replace(/<html\b/i, '<html lang="en"');
@@ -879,6 +1062,10 @@ function repairHtml(html: string, facts: Facts): string {
   }
 
   return out;
+}
+
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
 }
 
 /** Models often wrap the document in a markdown fence despite instructions. */
@@ -1155,7 +1342,7 @@ export async function generateHomepage(
         ? { max_tokens: provider.maxOutputTokens }
         : { max_completion_tokens: provider.maxOutputTokens }),
       messages: [
-        { role: "system", content: pageSystemPrompt(identity, sections, logo, context, images) },
+        { role: "system", content: pageSystemPrompt(identity, sections, logo, context, images, brand.headerCtaCount) },
         {
           role: "user",
           content: [
@@ -1181,6 +1368,8 @@ export async function generateHomepage(
   const html = repairHtml(
     sanitizeHtml(unfence(pageChoice?.message?.content ?? "")),
     mergeFacts(parseFacts(options.facts), brand),
+    identity.palette,
+    logo,
   );
 
   if (!/<\/html>/i.test(html) || html.length < 500) {
