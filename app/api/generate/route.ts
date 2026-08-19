@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { scrapeBrand } from "@/lib/scrape";
 import { parseBrief } from "@/lib/brief";
+import { parseFacts } from "@/lib/facts";
+import { parseGoals } from "@/lib/goals";
+import { parseSections } from "@/lib/sections";
 import { isRefineKey, refineInstruction } from "@/lib/refine";
 import { generateHomepage, type BrandSource } from "@/lib/generate";
 import type { BrandSummary } from "@/lib/types";
@@ -35,6 +38,12 @@ export async function POST(request: Request) {
 
   const mode = body?.mode === "brief" ? "brief" : "url";
 
+  // Ids only, checked against their catalogues — nothing here reaches the
+  // prompt as free text. Facts are the exception and are scrubbed in parseFacts.
+  const sections = parseSections(body?.sections);
+  const goals = parseGoals(body?.goals);
+  const facts = parseFacts(body?.facts);
+
   const refineKey = isRefineKey(body?.refine) ? body.refine : undefined;
   const refinement = refineKey
     ? refineInstruction(refineKey, body?.avoidPrimary)
@@ -56,6 +65,15 @@ export async function POST(request: Request) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Please check your answers.";
       return NextResponse.json({ error: message }, { status: 422 });
+    }
+
+    // Goals moved out of the brief, but the wizard still requires them — the
+    // validation moved with the field rather than being dropped.
+    if (goals.length === 0) {
+      return NextResponse.json(
+        { error: "Please pick at least one thing you want the website to do." },
+        { status: 422 },
+      );
     }
 
     const extraCopy = await tryExtraCopy(brief.sourceUrl);
@@ -92,7 +110,13 @@ export async function POST(request: Request) {
   }
 
   try {
-    const recommendation = await generateHomepage(source, { refinement, avoidPrimary });
+    const recommendation = await generateHomepage(source, {
+      refinement,
+      avoidPrimary,
+      sections,
+      goals,
+      facts,
+    });
     return NextResponse.json({ mode, brand: summary, recommendation });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Generation failed.";

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { saveBlob, saveText, slugify, splitStyles, zip } from "@/lib/download";
 import type { Recommendation } from "@/lib/types";
 
 /**
@@ -29,8 +30,60 @@ export default function HomepagePreview({
 }) {
   const [device, setDevice] = useState<DeviceId>("desktop");
   const [copied, setCopied] = useState(false);
+  const [menu, setMenu] = useState(false);
 
   const active = DEVICES.find((d) => d.id === device)!;
+  const slug = slugify(recommendation.brand.name);
+
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+
+    function onPointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setMenu(false);
+    }
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menu]);
+
+  /** One file that opens by double-clicking it. What most people want. */
+  function downloadSingle() {
+    saveText(recommendation.html, `${slug}-homepage.html`, "text/html");
+    setMenu(false);
+  }
+
+  /**
+   * The pair a developer expects. If the document somehow carries no <style>
+   * block there is nothing to split out, so this falls back to the single file
+   * rather than shipping an empty stylesheet.
+   */
+  function downloadSplit() {
+    const { html, css } = splitStyles(recommendation.html);
+
+    if (!css) {
+      downloadSingle();
+      return;
+    }
+
+    saveBlob(
+      zip([
+        { name: "index.html", content: html },
+        { name: "styles.css", content: css },
+      ]),
+      `${slug}-homepage.zip`,
+    );
+    setMenu(false);
+  }
 
   async function copyHtml() {
     try {
@@ -107,6 +160,78 @@ export default function HomepagePreview({
           >
             {copied ? "Copied ✓" : "Copy HTML"}
           </button>
+
+          <div ref={menuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setMenu((open) => !open)}
+              aria-expanded={menu}
+              aria-haspopup="menu"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:border-brand hover:text-brand"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Download
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+                className={`transition-transform ${menu ? "rotate-180" : ""}`}
+              >
+                <path
+                  d="m6 9 6 6 6-6"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+
+            {menu && (
+              <div
+                role="menu"
+                className="df-fade-up absolute right-0 z-20 mt-1.5 w-64 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={downloadSingle}
+                  className="block w-full px-4 py-3 text-left transition hover:bg-gray-50"
+                >
+                  <span className="block text-xs font-bold text-ink">
+                    Complete page (.html)
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-ink-soft">
+                    One file, styles included. Opens anywhere.
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={downloadSplit}
+                  className="block w-full border-t border-gray-100 px-4 py-3 text-left transition hover:bg-gray-50"
+                >
+                  <span className="block text-xs font-bold text-ink">
+                    HTML + CSS (.zip)
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-ink-soft">
+                    index.html and styles.css, split for editing.
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
 
           <button
             type="button"
