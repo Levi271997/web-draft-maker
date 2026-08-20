@@ -15,6 +15,8 @@ export type ScrapedBrand = {
   fonts: string[];
   headings: string[];
   buttonLabels: string[];
+  /** How many buttons their real header carries. A cap, not a target. */
+  headerCtaCount: number;
   navLabels: string[];
   bodyText: string;
   /** The page's prose with its structure kept — headings, bullets, quotes. */
@@ -281,24 +283,47 @@ function collectTagText(html: string, tag: string, limit: number): string[] {
   return out;
 }
 
+/**
+ * Their logo, or nothing.
+ *
+ * Returning nothing is a perfectly good outcome: the page prompt draws an SVG
+ * wordmark from the brand name when there is no file, and that looks far better
+ * than the wrong image. This used to fall back to og:image, which put a
+ * 1200x630 social banner in the header of any site whose logo is inline SVG or
+ * a CSS background — the worst-looking defect the tool produced.
+ */
 function extractLogo(html: string, base: string): string | null {
-  // An <img> whose class/alt/src mentions "logo" is the usual case.
-  for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
-    const hay = tag.toLowerCase();
-    if (!hay.includes("logo")) continue;
-    const src = attr(tag, "src") ?? attr(tag, "data-src");
-    if (src && !src.startsWith("data:")) return resolve(src, base);
-  }
-  const og = meta(html, "og:image");
-  if (og) return resolve(og, base);
+  const src = (tag: string) => {
+    const value = attr(tag, "src") ?? attr(tag, "data-src") ?? attr(tag, "data-lazy-src");
+    return value && !value.startsWith("data:") ? resolve(value, base) : null;
+  };
 
-  for (const tag of html.match(/<link\b[^>]*>/gi) ?? []) {
-    const rel = (attr(tag, "rel") ?? "").toLowerCase();
-    if (rel.includes("apple-touch-icon") || rel.includes("icon")) {
-      const href = attr(tag, "href");
-      if (href) return resolve(href, base);
-    }
+  // An <img> that names itself is the usual case and the only confident one.
+  for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
+    if (!/logo|wordmark|brandmark/i.test(tag)) continue;
+    const found = src(tag);
+    if (found) return found;
   }
+
+  // Otherwise the first image inside the masthead, as long as it is small
+  // enough to be a mark rather than a banner or a hero photograph.
+  const masthead = html.match(
+    /<(?:header|div)\b[^>]*(?:class|id)\s*=\s*["'][^"']*(?:header|masthead|navbar|topbar)[^"']*["'][\s\S]{0,4000}/i,
+  );
+
+  for (const tag of masthead?.[0].match(/<img\b[^>]*>/gi) ?? []) {
+    const width = Number(attr(tag, "width") ?? 0);
+    const height = Number(attr(tag, "height") ?? 0);
+    if (width && width > 400) continue;
+    if (height && height > 200) continue;
+    if (/sprite|icon-|avatar|banner|hero/i.test(tag)) continue;
+
+    const found = src(tag);
+    if (found) return found;
+  }
+
+  // Deliberately no og:image fallback, and no favicon: a 32px icon stretched
+  // into a header reads as broken. A wordmark drawn from the name is better.
   return null;
 }
 
@@ -530,6 +555,30 @@ function extractContentOutline(html: string, navLabels: string[], limit = 7000):
   return lines.join("\n").trim();
 }
 
+/**
+ * How many call-to-action buttons sit in their existing header.
+ *
+ * Generated headers drift toward three or four buttons on a site that has
+ * one, which immediately reads as somebody else's design. This is the ceiling.
+ */
+function countHeaderCtas(html: string): number {
+  const masthead = html.match(
+    /<header\b[\s\S]*?<\/header>|<(?:div|nav)\b[^>]*(?:class|id)\s*=\s*["'][^"']*(?:header|masthead|navbar|topbar)[^"']*["'][\s\S]{0,6000}/i,
+  );
+  if (!masthead) return 0;
+
+  const region = masthead[0];
+  const buttons = (region.match(/<button\b/gi) ?? []).length;
+  const ctaLinks = (
+    region.match(/<a\b[^>]*class\s*=\s*["'][^"']*(?:btn|button|cta)[^"']*["']/gi) ?? []
+  ).length;
+
+  // Hamburger toggles are buttons but are not calls to action.
+  const toggles = (region.match(/<button\b[^>]*(?:menu|toggle|hamburger|search|close)/gi) ?? []).length;
+
+  return Math.max(0, buttons + ctaLinks - toggles);
+}
+
 export async function scrapeBrand(inputUrl: string): Promise<ScrapedBrand> {
   const url = normalizeUrl(inputUrl);
 
@@ -624,6 +673,7 @@ export async function scrapeBrand(inputUrl: string): Promise<ScrapedBrand> {
     fonts,
     headings: [...new Set(headings)].slice(0, 10),
     buttonLabels: [...new Set(buttonLabels)].slice(0, 8),
+    headerCtaCount: countHeaderCtas(html),
     navLabels,
     bodyText: stripTags(bodyOnly).slice(0, 4000),
     contentOutline: extractContentOutline(html, navLabels),

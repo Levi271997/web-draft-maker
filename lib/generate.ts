@@ -240,9 +240,14 @@ function photographyBlock(images: ScrapedImage[]): string {
     "- portraits for people",
     "",
     "If a section needs a full-bleed photograph WITH text over it, use picsum.photos",
-    "for that section — stock is guaranteed to be textless. This is the one case",
-    "where stock beats the client's own imagery, and it does not count against the",
-    `${required}-image minimum.`,
+    "for that section — stock is guaranteed to be textless. That is the ONLY case",
+    "where stock is preferred, and it does not excuse you from the minimum.",
+    "",
+    "Most sections never write over their image — cards, splits, galleries and",
+    "portraits all keep their text beside or beneath the picture. Those slots are",
+    `where the client's photographs belong, and there are more than enough of them`,
+    `to place ${required}. Retreating to stock everywhere is a failure, not a safe`,
+    "choice: a page of stock photography is the exact thing this tool exists to avoid.",
     "",
     "Rules for these:",
     "- Reference each URL exactly as given. Never alter, resize, crop or proxy it.",
@@ -253,15 +258,60 @@ function photographyBlock(images: ScrapedImage[]): string {
   ].join("\n");
 }
 
+/**
+ * Which client photograph goes in which section.
+ *
+ * Stating a minimum and leaving placement to the model produced 2 of 7 used,
+ * twice, on two different sites. So decide it here: walk the outline, and hand
+ * each section that can hold a photograph a specific URL. The model is then
+ * following an instruction rather than exercising judgement it keeps declining
+ * to exercise.
+ *
+ * full-bleed-image is skipped on purpose — text sits on that treatment, and
+ * client marketing images often have text baked in already.
+ */
+function assignImages(
+  outline: OutlineEntry[],
+  images: ScrapedImage[],
+): Map<number, ScrapedImage> {
+  const assignment = new Map<number, ScrapedImage>();
+  if (images.length === 0) return assignment;
+
+  const queue = [...images];
+
+  outline.forEach((section, index) => {
+    if (queue.length === 0) return;
+    if (section.treatment === 'full-bleed-image') return;
+
+    const holdsPhoto =
+      IMAGE_TREATMENTS.includes(section.treatment) ||
+      section.treatment === 'card-grid' ||
+      section.treatment === 'overlap-feature';
+
+    if (holdsPhoto) assignment.set(index, queue.shift()!);
+  });
+
+  return assignment;
+}
+
 function pageSystemPrompt(
   id: Identity,
   sectionIds: string[],
   logo?: string | null,
   context?: string,
   images: ScrapedImage[] = [],
+  headerCtas = 0,
 ): string {
   const { palette, typography, brand, nav } = id;
   const photography = photographyBlock(images);
+  const assigned = assignImages(id.outline, images);
+
+  // Generated headers drift toward three or four buttons on a site that has
+  // one, and that alone makes the draft read as somebody else's design.
+  const headerCtaRule =
+    headerCtas > 0
+      ? `- Their existing header carries ${headerCtas} call-to-action button${headerCtas === 1 ? "" : "s"}. Use AT MOST that many. Fewer is fine; more is not.`
+      : "- Their existing header carries no call-to-action button at all. Use at most one, and keep it quiet.";
 
   const chrome = sectionIds
     .map(getSection)
@@ -287,6 +337,15 @@ PALETTE (define as CSS custom properties on :root and use throughout)
 --surface: ${palette.surface}
 --text: ${palette.text}
 --text-muted: ${palette.textMuted}
+--on-primary: ${palette.onPrimary}   /* text/icons ON --primary */
+--on-accent: ${palette.onAccent}     /* text/icons ON --accent  */
+
+CONTRAST IS NOT NEGOTIABLE. --on-primary and --on-accent were measured against
+WCAG AA for you. Any text, label or icon sitting on --primary uses --on-primary;
+anything on --accent uses --on-accent. Never write white on a colour just
+because it looks conventional — on a light brand colour it is unreadable.
+For text on a photograph, put a scrim behind it: a solid or gradient overlay at
+55% or more, never text straight onto an image.
 
 TYPE
 - Headings: "${typography.headingFont}"  |  Body: "${typography.bodyFont}"
@@ -297,10 +356,10 @@ NAVIGATION: ${nav.items.join(", ")} — with a "${nav.ctaLabel}" button.
 === LOGO ===
 ${
   logo
-    ? `Their existing logo is at ${logo} — use it as an <img> in the header and again, larger, in the hero. Give it an explicit height, width:auto and alt="${brand.name}".
+    ? `Their existing logo is at ${logo} — use it as an <img> in the header, and ONLY in the header. Not in the hero, not repeated anywhere else above the footer. Give it an explicit height, width:auto and alt="${brand.name}".
 If it would sit on a dark band, put it on a light chip — but size the chip to the image with inline-block and padding, never a fixed box, or a logo that fails to load leaves a blank white rectangle.
 Give it onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${brand.name}',className:'wordmark'}))" and style .wordmark as the brand name in the heading face, so a broken logo degrades to a wordmark rather than a hole.`
-    : `There is no logo file. Draw a wordmark for "${brand.name}" as inline SVG — the name set in the heading typeface with one small geometric mark beside it, built from --primary and --accent. Use the same wordmark in the header, the hero and the footer; never a placeholder box.`
+    : `There is no logo file. Draw a wordmark for "${brand.name}" as inline SVG — the name set in the heading typeface with one small geometric mark beside it, built from --primary and --accent. Use it in the header and the footer only, never in the hero, and never a placeholder box.`
 }
 
 === PHOTOGRAPHY (important — the page must not be image-free) ===
@@ -309,7 +368,7 @@ ${photography}For any image slot the list above did not fill, use picsum.photos.
 Rules:
 - Use a DIFFERENT seed word per image (e.g. /seed/harbour/, /seed/atelier/) so no two repeat.
 - Sizes: hero/full-bleed 1600/900, cards 800/600, tall portraits 600/800, avatars 200/200.
-- Always set width/height attributes and style with object-fit: cover, plus a border-radius that matches the page.
+- EVERY <img> needs width and height attributes, without exception — for picsum use the numbers already in the URL. Missing them makes the page jump around as photographs load. Style with object-fit: cover plus a border-radius that matches the page.
 - Art-direct them so they don't read as stock: overlay a brand-colour gradient
   (e.g. linear-gradient(180deg, transparent, var(--primary-dark)) at 50-80% opacity),
   or apply filter: saturate(0.8) contrast(1.05), or a duotone-ish blend mode.
@@ -359,6 +418,95 @@ Accessibility: every control is a real <button>, reachable by keyboard, with ari
 - Consider a subtle grain or mesh-gradient backdrop on one dark section.
 - Buttons: real presence — solid fill, adequate padding (0.9rem 1.6rem), clear hover and visible :focus-visible ring.
 
+=== THE HERO — READ THIS TWICE ===
+This band decides whether the page looks designed or assembled, and it is
+where generated pages go wrong most often. These are requirements.
+
+CONTAINER
+- The hero's CONTENT sits in the SAME max-width container as every other
+  section on the page, with the same horizontal padding. Define one container
+  class and use it everywhere, hero included.
+- Only the hero's BACKGROUND may be full-bleed. Its text never is.
+
+ALIGNMENT
+- Pick ONE of left-aligned or centred for the whole hero, and commit to it.
+- The headline and the supporting paragraph share that alignment. Never a
+  centred headline over a left-aligned paragraph, or the reverse.
+- No justified text, no right-aligned text, anywhere in the hero.
+
+NO LOGO IN THE HERO
+- The logo lives in the header. Do not place it, or a wordmark, or a logo
+  chip, in the hero. It pushes the headline down and duplicates the header
+  two centimetres below itself.
+
+CONTRAST — the hero must never be a guess
+You cannot see the background you are choosing, so make it knowable:
+- With a PHOTOGRAPH behind the hero, you do not know if it is light or dark.
+  Therefore ALWAYS lay a scrim over the whole image — a solid or gradient
+  overlay in --primary-dark at 55% or more — and set all hero text to white.
+  Never text straight onto a photograph.
+- With a SOLID colour behind the hero, use --primary-dark or --bg. On
+  --primary-dark all text is white; on --bg all text is --text.
+- If you use --primary as a hero background, its text colour is --on-primary,
+  which has already been measured for you. Do not assume white.
+
+=== THE HEADER ===
+The header sits OVER the hero, so its colour follows the hero's background, not
+the page's. This is the single most common way a generated page breaks: a
+transparent header with --text links over a dark hero is an invisible menu.
+
+Over a DARK hero (any scrimmed photograph, or --primary-dark) write exactly
+this shape — both states, not just the scrolled one:
+
+  .site-header { background: transparent; }
+  .site-header .nav-links a,
+  .site-header .logo { color: #fff; }
+  .site-header.scrolled { background: var(--bg); box-shadow: ...; }
+  .site-header.scrolled .nav-links a,
+  .site-header.scrolled .logo { color: var(--text); }
+
+Over a LIGHT hero (--bg) the links are var(--text) in both states.
+Never leave the unscrolled state inheriting a colour you did not set.
+${headerCtaRule}
+- The hamburger toggle under 900px is not a call to action and does not count
+  toward that limit.
+
+=== THE FOOTER ===
+Pick the footer's background deliberately, then colour everything inside it
+to match. A footer that inherits page text colours onto a dark band is the
+same failure as an invisible header, at the other end of the page.
+
+On a DARK footer (--primary-dark, or any dark brand colour):
+
+  footer { background: var(--primary-dark); color: #fff; }
+  footer a, footer h2, footer h3, footer strong { color: #fff; }
+  footer a:hover { opacity: .8; }
+  footer .muted, footer small { color: rgba(255,255,255,.72); }
+  footer svg { fill: currentColor; }
+
+On a LIGHT footer (--bg or --surface):
+
+  footer { background: var(--surface); color: var(--text); }
+  footer a, footer h2, footer h3 { color: var(--text); }
+  footer .muted, footer small { color: var(--text-muted); }
+
+This covers the logo too: a dark-ink logo on a dark footer disappears, so on
+a dark footer either use a white/knockout treatment or sit it on a light chip
+sized to the image. Social icons follow the same rule — they inherit
+currentColor rather than carrying their own fill.
+Never leave footer text, links or icons taking their colour from the page
+default when the footer background differs from the page background.
+
+=== EVERY LINK MUST GO SOMEWHERE ===
+href="#" is forbidden. A button that does nothing is the most obvious flaw a
+client finds, and pages have come back with nineteen of them.
+- In-page nav and section links point at a real id that exists on this page.
+- Every other call to action — "Get a quote", "Book", "Start", "Log in", "Buy" —
+  points at #contact if a contact section exists, otherwise at the phone number
+  as tel:, otherwise at the email as mailto:.
+- Do not invent external URLs. Social links use only the profile URLs you were
+  given; if none were given, omit the social icons entirely.
+
 === COPY ===
 Real, specific, concrete. Actual names, numbers, places and detail drawn from the source material. Never "Lorem ipsum", never "Feature One", never "Your Company".
 
@@ -396,10 +544,14 @@ ${id.outline
   .map((s, i) => {
     const note = TREATMENT_NOTES[s.treatment] ?? "";
     const build = getSection(s.section)?.build;
+    const picture = assigned.get(i);
     return [
       `${i + 1}. ${s.title} — ${s.intent}`,
       `   TREATMENT: ${s.treatment}${note ? ` (${note})` : ""}`,
       build ? `   BUILD: ${build}` : "",
+      picture
+        ? `   IMAGE: use ${picture.url} here — this is the client's own photograph and it is assigned to this section. Do not substitute stock for it.${picture.alt ? ` Their site describes it as "${picture.alt}".` : ""}`
+        : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -438,6 +590,58 @@ function buildUserPrompt(b: ScrapedBrand): string {
   ];
 
   return lines.filter(Boolean).join("\n");
+}
+
+/**
+ * Sections that state things about people and numbers need evidence, and the
+ * scrape usually doesn't have it.
+ *
+ * Told to build a team section with nothing to build it from, the model does
+ * not invent names — the factual rules stop that — it does something worse. It
+ * reaches into the page for real strings and gives them jobs. One run listed
+ * two mascots from a seasonal campaign and a client company as staff, complete
+ * with roles. Real words, wrong roles, entirely credible.
+ *
+ * So: work out what the source can actually support, and say so per section.
+ */
+function evidenceWarnings(sectionIds: string[], brand: ScrapedBrand): string {
+  const corpus = `${brand.contentOutline}\n${brand.bodyText}`.toLowerCase();
+  const warnings: string[] = [];
+
+  const mentions = (re: RegExp) => re.test(corpus);
+
+  if (sectionIds.includes("team") && !mentions(/\b(our team|meet the team|our people|staff|founder|co-founder|ceo|director|employees)\b/)) {
+    warnings.push(
+      "- team: their site names no staff. Do NOT put personal names in this section. Names you can see in the copy are campaign characters, product names or client companies, not employees. Write it about how the work gets done and who it is done by as a group, with no portraits of named individuals.",
+    );
+  }
+
+  if (sectionIds.includes("testimonials") && !mentions(/\b(testimonial|review|client says|customers say|" ?—|said |quote)\b/)) {
+    warnings.push(
+      "- testimonials: no customer quotes were found. Do not write quotation marks around words nobody said, and do not attribute anything to a named person. Use the results and case detail in their copy as evidence instead, attributed to the project or the client company.",
+    );
+  }
+
+  if (sectionIds.includes("stats") && !/\d/.test(corpus)) {
+    warnings.push(
+      "- stats: no figures were found anywhere in their copy. Write the qualitative version — what they are known for — and use no numerals at all.",
+    );
+  }
+
+  if (sectionIds.includes("pricing") && !mentions(/(\$|£|€|kr\b|price|pricing|per month|from \d)/)) {
+    warnings.push(
+      "- pricing: no prices were found. Describe what each package includes and label the cost as available on request. Never invent a figure.",
+    );
+  }
+
+  if (warnings.length === 0) return "";
+
+  return [
+    "=== SECTIONS THE SOURCE CANNOT FULLY SUPPORT ===",
+    "The client chose these, so build them — but build them out of what is true:",
+    "",
+    ...warnings,
+  ].join("\n");
 }
 
 /**
@@ -612,7 +816,80 @@ function sanitizePalette(p: Palette): Palette {
     if (!HEX_RE.test(v)) v = fallback[k];
     (out as Record<string, string>)[k] = v;
   }
-  return out;
+  return ensureContrast(out);
+}
+
+/* ---------------- Contrast ---------------- */
+
+/** Relative luminance, per WCAG 2.1. */
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function contrast(a: string, b: string): number {
+  const [light, dark] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+/** Multiply every channel, keeping hue. */
+function darken(hex: string, factor: number): string {
+  const channels = [1, 3, 5].map((i) =>
+    Math.max(0, Math.round(parseInt(hex.slice(i, i + 2), 16) * factor)),
+  );
+  return `#${channels.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Whichever of black or white is more readable on this colour. */
+function readableOn(background: string): string {
+  return contrast("#ffffff", background) >= contrast("#111111", background)
+    ? "#ffffff"
+    : "#111111";
+}
+
+/**
+ * Buttons are the one place a faithful brand colour reliably breaks the page:
+ * a mid-orange primary with white text measures about 2:1 where AA wants 4.5,
+ * and a vivid yellow accent is worse. Both were observed on real client sites.
+ *
+ * Rather than prompt for it, decide it here. The button label colour is chosen
+ * by measurement, and a primary that fails against BOTH black and white is
+ * darkened until it passes — the hue survives, the unreadability doesn't.
+ */
+function ensureContrast(p: Palette): Palette {
+  let primary = p.primary;
+
+  for (let i = 0; i < 12; i++) {
+    const best = Math.max(contrast("#ffffff", primary), contrast("#111111", primary));
+    if (best >= 4.5) break;
+    primary = darken(primary, 0.88);
+  }
+
+  // primaryDark carries deep surfaces with light text on them.
+  let primaryDark = p.primaryDark;
+  for (let i = 0; i < 12 && contrast("#ffffff", primaryDark) < 4.5; i++) {
+    primaryDark = darken(primaryDark, 0.88);
+  }
+
+  // Muted text is the other repeat offender — legible, but only just.
+  let textMuted = p.textMuted;
+  for (let i = 0; i < 12 && contrast(textMuted, p.background) < 4.5; i++) {
+    textMuted = darken(textMuted, 0.9);
+  }
+
+  return {
+    ...p,
+    primary,
+    primaryDark,
+    textMuted,
+    // Accent stays as chosen — it is decorative and often deliberately loud —
+    // but whatever sits on it is now measured rather than assumed.
+    onPrimary: readableOn(primary),
+    onAccent: readableOn(p.accent),
+  };
 }
 
 /**
@@ -632,6 +909,163 @@ function sanitizeHtml(html: string): string {
     .replace(/<link\b[^>]*rel\s*=\s*["']?stylesheet["']?[^>]*>/gi, (tag) =>
       /fonts\.(googleapis|gstatic)\.com/i.test(tag) ? tag : "",
     );
+}
+
+/**
+ * The last line of defence, applied after the model has finished.
+ *
+ * Everything here is a rule the prompt already states and the model still
+ * breaks some of the time. Prompting moves the odds; this closes them, and it
+ * is cheap because each fix is a pure string transform with a known-correct
+ * answer.
+ */
+function repairHtml(
+  html: string,
+  facts: Facts,
+  palette: Palette,
+  logo?: string | null,
+): string {
+  let out = html;
+
+  /* The logo belongs in the header only. Repeating it in the hero pushes the
+     headline down and duplicates the header a few centimetres below itself. */
+  if (logo) {
+    const heroStart = out.search(/<section\b[^>]*(?:class|id)\s*=\s*["'][^"']*hero/i);
+
+    if (heroStart >= 0) {
+      const heroEnd = out.indexOf("</section>", heroStart);
+      if (heroEnd > heroStart) {
+        const hero = out.slice(heroStart, heroEnd);
+        const withoutLogo = hero.replace(
+          new RegExp(`<img\\b[^>]*${escapeForRegExp(logo)}[^>]*>`, "gi"),
+          "",
+        );
+        if (withoutLogo !== hero) out = out.slice(0, heroStart) + withoutLogo + out.slice(heroEnd);
+      }
+    }
+  }
+
+  /* Dead links. A button that does nothing is the flaw clients spot first. */
+  const ids = new Set([...out.matchAll(/\sid=["']([^"']+)["']/g)].map((m) => m[1]));
+
+  const destination =
+    (ids.has("contact") && "#contact") ||
+    (facts.phone && `tel:${facts.phone.replace(/[^\d+]/g, "")}`) ||
+    (facts.email && `mailto:${facts.email}`) ||
+    // Last resort: whatever section is closest to a call to action.
+    (ids.has("cta") && "#cta") ||
+    null;
+
+  if (destination) {
+    out = out.replace(/href=(["'])#\1/g, `href="${destination}"`);
+  }
+
+  /* Layout shift. picsum states its dimensions in the URL, so this is exact. */
+  out = out.replace(/<img\b[^>]*>/gi, (tag) => {
+    if (/\swidth\s*=/i.test(tag) && /\sheight\s*=/i.test(tag)) return tag;
+
+    const size = tag.match(/picsum\.photos\/seed\/[^/"']+\/(\d+)\/(\d+)/i);
+    if (!size) return tag;
+
+    const attrs = [
+      /\swidth\s*=/i.test(tag) ? "" : ` width="${size[1]}"`,
+      /\sheight\s*=/i.test(tag) ? "" : ` height="${size[2]}"`,
+    ].join("");
+
+    return tag.replace(/\s*\/?>$/, `${attrs}>`);
+  });
+
+  /* The menu disappearing over a dark hero is the most common visual failure
+     left, and prompting alone did not close it. If the hero is demonstrably
+     dark — a photograph behind a scrim, or a dark brand colour — append an
+     override so the unscrolled header stays legible. Appended rules win. */
+  const heroRule = out.match(/\.hero\b[^{]*\{[^}]*\}/i)?.[0] ?? "";
+  const heroIsDark =
+    /url\(/i.test(heroRule) ||
+    /--primary-dark/i.test(heroRule) ||
+    /rgba?\(\s*\d{1,2}\s*,\s*\d{1,2}\s*,/.test(heroRule);
+
+  if (heroIsDark && /<\/style>/i.test(out)) {
+    out = out.replace(
+      /<\/style>/i,
+      [
+        "",
+        "/* legibility over a dark hero */",
+        "header:not(.scrolled) a, header:not(.scrolled) .logo,",
+        ".site-header:not(.scrolled) a, .site-header:not(.scrolled) .logo { color: #fff; }",
+        "header.scrolled a, .site-header.scrolled a { color: var(--text); }",
+        "</style>",
+      ].join("\n"),
+    );
+  }
+
+  /* Same failure as the header, at the other end of the page: a footer whose
+     background differs from the page's, with text still inheriting the page
+     colour. Resolve the footer's background — palette variable or literal —
+     measure it, and append an override. Appended rules win. */
+  // Take the first footer rule that actually sets a background — the first one
+  // mentioning "footer" is often a layout helper like .footer-grid.
+  let footerBg: string | undefined;
+  for (const rule of out.matchAll(/\bfooter\b[^{]*\{[^}]*\}/gi)) {
+    const found = rule[0].match(/background(?:-color)?\s*:\s*([^;}]+)/i)?.[1]?.trim();
+    if (found) {
+      footerBg = found;
+      break;
+    }
+  }
+
+  if (footerBg) {
+    const named: Record<string, string> = {
+      "--primary": palette.primary,
+      "--primary-dark": palette.primaryDark,
+      "--accent": palette.accent,
+      "--bg": palette.background,
+      "--surface": palette.surface,
+      "--text": palette.text,
+    };
+
+    const variable = footerBg.match(/var\(\s*(--[\w-]+)/)?.[1];
+    const literal = footerBg.match(/#[0-9a-f]{6}\b/i)?.[0];
+    const resolved = (variable && named[variable]) || literal || null;
+
+    if (resolved) {
+      const ink = readableOn(resolved);
+      const muted =
+        ink === "#ffffff" ? "rgba(255,255,255,.72)" : palette.textMuted;
+
+      out = out.replace(
+        /<\/style>/i,
+        () =>
+          [
+            "",
+            "/* legibility inside the footer */",
+            `footer, footer p, footer li, footer a, footer h2, footer h3, footer h4, footer strong { color: ${ink}; }`,
+            `footer small, footer .muted { color: ${muted}; }`,
+            "footer svg { fill: currentColor; }",
+            "</style>",
+          ].join("\n"),
+      );
+    }
+  }
+
+  /* Screen readers and translation tools both need this. */
+  if (!/<html[^>]*\slang=/i.test(out)) {
+    out = out.replace(/<html\b/i, '<html lang="en"');
+  }
+
+  /* A page that can't scale on a phone is unusable, not merely imperfect. */
+  if (!/<meta[^>]+name=["']viewport["']/i.test(out)) {
+    out = out.replace(
+      /<head[^>]*>/i,
+      (head) => `${head}\n<meta name="viewport" content="width=device-width, initial-scale=1">`,
+    );
+  }
+
+  return out;
+}
+
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
 }
 
 /** Models often wrap the document in a markdown fence despite instructions. */
@@ -801,6 +1235,7 @@ export async function generateHomepage(
   const context = [
     goalsToPrompt(parseGoals(options.goals)),
     factsToPrompt(mergeFacts(parseFacts(options.facts), brand)),
+    evidenceWarnings(sections, brand),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -907,7 +1342,7 @@ export async function generateHomepage(
         ? { max_tokens: provider.maxOutputTokens }
         : { max_completion_tokens: provider.maxOutputTokens }),
       messages: [
-        { role: "system", content: pageSystemPrompt(identity, sections, logo, context, images) },
+        { role: "system", content: pageSystemPrompt(identity, sections, logo, context, images, brand.headerCtaCount) },
         {
           role: "user",
           content: [
@@ -930,7 +1365,12 @@ export async function generateHomepage(
     throw new Error(`OpenAI declined to write the page: ${pageChoice.message.refusal}`);
   }
 
-  const html = sanitizeHtml(unfence(pageChoice?.message?.content ?? ""));
+  const html = repairHtml(
+    sanitizeHtml(unfence(pageChoice?.message?.content ?? "")),
+    mergeFacts(parseFacts(options.facts), brand),
+    identity.palette,
+    logo,
+  );
 
   if (!/<\/html>/i.test(html) || html.length < 500) {
     throw new Error(

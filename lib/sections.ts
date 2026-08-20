@@ -45,11 +45,11 @@ export const SECTION_CHOICES: SectionChoice[] = [
   },
   {
     id: "hero",
-    label: "Hero with your logo",
+    label: "Hero banner",
     hint: "The big opening statement",
     required: true,
     build:
-      "The opening band. The logo appears here at large size as well as in the header, above one headline, one supporting line and the primary action. This is the only place on the page the logo is allowed to dominate.",
+      "The opening band: one headline, one supporting line, and the primary action. No logo — the logo belongs in the header and nowhere else, and repeating it here just pushes the headline down. See the HERO rules for layout, alignment and contrast, which are not negotiable.",
     treatments: ["full-bleed-image", "split-image-right", "centered-statement"],
     fallback: {
       title: "Hero",
@@ -195,7 +195,7 @@ export const SECTION_CHOICES: SectionChoice[] = [
     required: true,
     chrome: true,
     build:
-      "A site footer with the logo, contact details, a short link list, social icons and a copyright line.",
+      "A site footer with the logo, contact details, a short link list, social icons and a copyright line. Everything inside it must be legible against whatever background it sits on — see the FOOTER rules.",
   },
 ];
 

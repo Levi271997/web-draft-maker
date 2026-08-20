@@ -7,6 +7,14 @@ export type Palette = {
   text: string;
   textMuted: string;
   rationale: string;
+  /**
+   * Which of black or white to write ON primary and ON accent. Computed from
+   * the contrast ratio rather than chosen by the model, because a brand whose
+   * real colour is a light orange produces an unreadable white-on-orange button
+   * and no amount of prompting reliably prevents it.
+   */
+  onPrimary: string;
+  onAccent: string;
 };
 
 /**
