@@ -7,7 +7,6 @@ import { REFINEMENTS, type RefineKey } from "@/lib/refine";
 import { DEFAULT_SECTIONS } from "@/lib/sections";
 import BrandReadout from "./BrandReadout";
 import DetailsPanel from "./DetailsPanel";
-import GoalPicker from "./GoalPicker";
 import LoadingState from "./LoadingState";
 import HomepagePreview from "./HomepagePreview";
 import SectionPicker from "./SectionPicker";
@@ -200,23 +199,9 @@ export default function GeneratorForm({ bookingUrl }: { bookingUrl: string }) {
             ))}
           </div>
 
-          {/* Not folded away. A scrape shows what the site has and never
-                  what the business wants, and that gap is usually the reason
-                  they're here — so this one question is worth the friction. */}
-          <div className="mt-6 border-t border-gray-200 pt-5">
-            <h3 className="font-heading text-sm font-bold text-ink">
-              What should the new homepage do?
-            </h3>
-            <p className="mt-0.5 mb-3 text-xs text-ink-soft">
-              We can read your branding, but not what you want out of a
-              redesign. Pick as many as you like.
-            </p>
-            <GoalPicker value={goals} onChange={setGoals} disabled={loading} />
-          </div>
-
           {/* Folded away — the paste-and-go path stays intact for anyone
                   who just wants to see what the tool does. */}
-          <details className="mt-4 rounded-xl border border-gray-200 bg-cream">
+          <details className="mt-5 rounded-xl border border-gray-200 bg-cream">
             <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-ink marker:content-none">
               <span className="flex items-center justify-between gap-3">
                 <span>
